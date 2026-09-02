@@ -1,4 +1,4 @@
-# Clip
+# Slip
 
 极简网页剪贴板 —— 私人自用版，零依赖单文件（只用 Python 3 标准库）。
 
@@ -15,20 +15,20 @@ curl -sL https://HOST/                # 取回来（只有这一条命令）
 
 ```bash
 python3 main.py
-CLIP_PORT=80 CLIP_TTL=86400 python3 main.py
+SLIP_PORT=80 SLIP_TTL=86400 python3 main.py
 ```
 
 ## 环境变量
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `CLIP_HOST` | 监听地址 | `0.0.0.0` |
-| `CLIP_PORT` | 监听端口 | `8080` |
-| `CLIP_FILE` | 根路径内容文件 | 脚本同级的 `clip.txt` |
-| `CLIP_STORE` | `/a`、`/b` 等路径文件目录 | `clip.txt.files` |
-| `CLIP_TTL` | 有效期秒数；`0` = 不过期 | 7 天 |
-| `CLIP_MAX_BYTES` | 大小上限 | 2MB |
-| `CLIP_TOKEN` | 可选访问令牌，留空则公开；设置后请求需带 `X-Clip-Token` 头或 `?token=` 参数 | 空 |
+| `SLIP_HOST` | 监听地址 | `0.0.0.0` |
+| `SLIP_PORT` | 监听端口 | `8080` |
+| `SLIP_FILE` | 根路径内容文件 | 脚本同级的 `slip.txt` |
+| `SLIP_STORE` | `/a`、`/b` 等路径文件目录 | `slip.txt.files` |
+| `SLIP_TTL` | 有效期秒数；`0` = 不过期 | 7 天 |
+| `SLIP_MAX_BYTES` | 大小上限 | 2MB |
+| `SLIP_TOKEN` | 可选访问令牌，留空则公开；设置后请求需带 `X-Slip-Token` 头或 `?token=` 参数 | 空 |
 
 ## 接口
 
@@ -43,5 +43,5 @@ CLIP_PORT=80 CLIP_TTL=86400 python3 main.py
 
 ## 注意
 
-- 未设置 `CLIP_TOKEN` 时服务是公开的：知道地址的人都能覆盖/清空内容。部署到公网前请先设好令牌。
+- 未设置 `SLIP_TOKEN` 时服务是公开的：知道地址的人都能覆盖/清空内容。部署到公网前请先设好令牌。
 - 数据存的是磁盘上的纯文件，可以直接 `cat` 查看或手工编辑。

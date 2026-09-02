@@ -12,17 +12,17 @@
 curl 和浏览器访问同一地址，靠 Accept 头自动区分返回纯文本还是网页。
 
 启动：
-    python3 web_clipboard.py
-    CLIP_PORT=80 CLIP_TTL=86400 python3 web_clipboard.py
+    python3 main.py
+    SLIP_PORT=80 SLIP_TTL=86400 python3 main.py
 
 环境变量：
-    CLIP_HOST       监听地址，默认 0.0.0.0
-    CLIP_PORT       监听端口，默认 8080
-    CLIP_FILE       根路径内容文件，默认脚本同级的 clip.txt
-    CLIP_STORE      /a、/b 等路径文件目录，默认 clip.txt.files
-    CLIP_TTL        有效期秒数，默认 7 天；0 = 不过期
-    CLIP_MAX_BYTES  大小上限，默认 2MB
-    CLIP_TOKEN      可选访问令牌，留空则公开（见下方说明）
+    SLIP_HOST       监听地址，默认 0.0.0.0
+    SLIP_PORT       监听端口，默认 8080
+    SLIP_FILE       根路径内容文件，默认脚本同级的 slip.txt
+    SLIP_STORE      /a、/b 等路径文件目录，默认 slip.txt.files
+    SLIP_TTL        有效期秒数，默认 7 天；0 = 不过期
+    SLIP_MAX_BYTES  大小上限，默认 2MB
+    SLIP_TOKEN      可选访问令牌，留空则公开（见下方说明）
 
 接口：
     GET  /        浏览器→网页；curl→纯文本原文
@@ -42,19 +42,19 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-VER = "Clip/3.0"
+VER = "Slip/1.0"
 
-HOST = os.environ.get("CLIP_HOST", "0.0.0.0")
-PORT = int(os.environ.get("CLIP_PORT", "8080"))
+HOST = os.environ.get("SLIP_HOST", "0.0.0.0")
+PORT = int(os.environ.get("SLIP_PORT", "8080"))
 FILE = os.environ.get(
-    "CLIP_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "clip.txt")
+    "SLIP_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "slip.txt")
 )
-STORE = os.environ.get("CLIP_STORE", FILE + ".files")
-TTL = int(os.environ.get("CLIP_TTL", str(7 * 24 * 3600)))
-MAX = int(os.environ.get("CLIP_MAX_BYTES", str(2 * 1024 * 1024)))
+STORE = os.environ.get("SLIP_STORE", FILE + ".files")
+TTL = int(os.environ.get("SLIP_TTL", str(7 * 24 * 3600)))
+MAX = int(os.environ.get("SLIP_MAX_BYTES", str(2 * 1024 * 1024)))
 TOKEN = os.environ.get(
-    "CLIP_TOKEN", ""
-)  # 留空=公开；设置后需 X-Clip-Token 头或 ?token=
+    "SLIP_TOKEN", ""
+)  # 留空=公开；设置后需 X-Slip-Token 头或 ?token=
 
 
 # ---------------- 存储：就一个纯文本文件，可直接 cat / 手工编辑 ----------------
@@ -225,12 +225,12 @@ PAGE = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>剪贴板</title>
+<title>slip</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23e6b54e'/%3E%3Cg fill='%231a1406'%3E%3Crect x='8' y='8' width='16' height='3.5' rx='1.75'/%3E%3Crect x='8' y='14.25' width='16' height='3.5' rx='1.75'/%3E%3Crect x='8' y='20.5' width='9' height='3.5' rx='1.75'/%3E%3C/g%3E%3C/svg%3E">
 <style>__CSS__</style></head><body><main>
 <header class="head">
   <div>
-    <h1>剪贴板<span class="tag">clip</span></h1>
+    <h1>剪贴板<span class="tag">slip</span></h1>
     <p class="hint">一个地址，一块内容。curl 与浏览器共用同一块存储。</p>
   </div>
   <span class="chip">__CHIP__</span>
@@ -263,7 +263,7 @@ const saveBtn=document.getElementById('save');
 function setMsg(t,c){msg.textContent=t;msg.className=c||'';}
 const endpoint=__PATH_JSON__;
 function q(){return T?'?token='+encodeURIComponent(T):'';}
-function hdr(x){const h=Object.assign({},x||{});if(T)h['X-Clip-Token']=T;return h;}
+function hdr(x){const h=Object.assign({},x||{});if(T)h['X-Slip-Token']=T;return h;}
 document.getElementById('cp').onclick=e=>{navigator.clipboard.writeText(ta.value).then(()=>{const b=e.target;b.textContent='已复制';setTimeout(()=>b.textContent='复制全文',1200);});};
 saveBtn.onclick=async()=>{
   if(!ta.value){setMsg('内容为空','err');return;}
@@ -389,7 +389,7 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self):
         if not TOKEN:
             return True
-        if self.headers.get("X-Clip-Token") == TOKEN:
+        if self.headers.get("X-Slip-Token") == TOKEN:
             return True
         return (parse_qs(urlparse(self.path).query).get("token") or [""])[0] == TOKEN
 
