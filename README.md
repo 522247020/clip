@@ -238,6 +238,26 @@ systemctl status clip --no-pager
 
 > 静态 musl 二进制不依赖服务器 glibc；若服务器是 arm64，请改用对应 target 重新构建。
 
+### Nginx 反代示例
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # 注意：不要设成 Connection upgrade（那是给 WebSocket 的），
+    # 否则 tiny_http 会把整条长连接当成请求体，POST/PUT 会卡住直至客户端 499。
+    proxy_set_header Connection "";
+
+    # 允许 10MB 二进制上传（Nginx 默认只有 1m）
+    client_max_body_size 12m;
+}
+```
+
 ## 安全建议
 
 - 至少设置一个后台口令，并在反向代理后启用 HTTPS（Cookie 会自动加 `Secure`）。

@@ -1490,6 +1490,22 @@ fn json_response(state: &AppState, req: Request, code: u16, body: Vec<u8>) {
     respond(state, req, code, body, "application/json; charset=utf-8", vec![]);
 }
 
+/// 读取请求体。优先按 Content-Length 截断：某些反代会给所有请求加
+/// `Connection: upgrade`，此时 tiny_http 会把整条长连接当作 body，
+/// `read_to_end` 会一直等到连接关闭。按 Content-Length 读取可避免卡死。
+fn read_body_limited(req: &mut Request, limit: u64) -> std::io::Result<Vec<u8>> {
+    let cap = match req.body_length() {
+        Some(n) => (n as u64).min(limit),
+        None => limit,
+    };
+    let mut body = Vec::new();
+    if cap > 0 {
+        let mut reader = req.as_reader().take(cap);
+        reader.read_to_end(&mut body)?;
+    }
+    Ok(body)
+}
+
 fn authorized(cfg: &Config, req: &Request, query: &str) -> bool {
     if cfg.token.is_empty() {
         return true;
@@ -1795,13 +1811,10 @@ fn do_write(state: &AppState, mut req: Request, path: String, query: String) {
         );
     }
 
-    let mut body = Vec::new();
-    {
-        let mut reader = req.as_reader().take(hard + 1);
-        if reader.read_to_end(&mut body).is_err() {
-            return json_response(state, req, 400, json_error("读取请求体失败"));
-        }
-    }
+    let body = match read_body_limited(&mut req, hard + 1) {
+        Ok(b) => b,
+        Err(_) => return json_response(state, req, 400, json_error("读取请求体失败")),
+    };
     if body.len() as u64 > hard {
         return json_response(
             state,
@@ -2260,11 +2273,7 @@ fn admin_login_submit(state: &AppState, mut req: Request) {
     let declared = header_value_owned(&req, "Content-Type")
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let mut body = Vec::new();
-    {
-        let mut reader = req.as_reader().take(4096);
-        let _ = reader.read_to_end(&mut body);
-    }
+    let body = read_body_limited(&mut req, 4096).unwrap_or_default();
     let text = String::from_utf8_lossy(&body).into_owned();
     let password = if declared.contains("application/json") {
         json_get(&text, "password").unwrap_or_default()
@@ -2345,11 +2354,7 @@ fn admin_logout(state: &AppState, req: Request) {
 }
 
 fn admin_change_password(state: &AppState, mut req: Request) {
-    let mut body = Vec::new();
-    {
-        let mut reader = req.as_reader().take(8192);
-        let _ = reader.read_to_end(&mut body);
-    }
+    let body = read_body_limited(&mut req, 8192).unwrap_or_default();
     let text = String::from_utf8_lossy(&body).into_owned();
     let current = json_get(&text, "current").unwrap_or_default();
     let new = json_get(&text, "new").unwrap_or_default();
@@ -2374,11 +2379,7 @@ fn admin_change_password(state: &AppState, mut req: Request) {
 }
 
 fn admin_create_share(state: &AppState, mut req: Request) {
-    let mut body = Vec::new();
-    {
-        let mut reader = req.as_reader().take(65536);
-        let _ = reader.read_to_end(&mut body);
-    }
+    let body = read_body_limited(&mut req, 65536).unwrap_or_default();
     let text = String::from_utf8_lossy(&body).into_owned();
 
     let name = json_get(&text, "name").unwrap_or_default();
