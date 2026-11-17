@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>剪贴板</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23e6b54e'/%3E%3Cg fill='%231a1406'%3E%3Crect x='8' y='8' width='16' height='3.5' rx='1.75'/%3E%3Crect x='8' y='14.25' width='16' height='3.5' rx='1.75'/%3E%3Crect x='8' y='20.5' width='9' height='3.5' rx='1.75'/%3E%3C/g%3E%3C/svg%3E">
+<style>__CSS__</style></head><body><main>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="4" width="14" height="17" rx="3"/>
+        <path d="M9 4.5V3.6A1.6 1.6 0 0 1 10.6 2h2.8A1.6 1.6 0 0 1 15 3.6v.9"/>
+        <path d="M9 10h6M9 14h6M9 18h3"/>
+      </svg>
+    </span>
+    <div class="brand-text">
+      <h1>剪贴板</h1>
+      <p class="hint">一个地址，一块内容 · 文本可编辑 · 图片可预览 · 文件可下载</p>
+    </div>
+  </div>
+  <div class="tools">
+    <span class="chip">__CHIP__</span>
+    <button class="iconbtn" id="theme" type="button" aria-label="切换主题"></button>
+  </div>
+</header>
+
+<section class="editor">
+  <div class="card-head">
+    <span class="filename">__TITLE__</span>
+    <span class="card-meta">__META__</span>
+  </div>
+  __BODY__
+  <div class="card-foot">
+    __ACTIONS__
+    <label class="btn" for="file">&#65291; 上传文件</label>
+    <input id="file" type="file" hidden>
+    <label class="check"><input id="once" type="checkbox" __ONCE_CHECKED__> 阅后即焚</label>
+    <a id="onceLink" class="btn primary" href="#" hidden target="_blank" rel="noreferrer">打开（仅一次）</a>
+    <span id="msg" role="status">__HINT__</span>
+  </div>
+</section>
+
+<footer>
+  <p class="section-label">命令</p>
+  <div class="cmd">
+    <div class="line"><span class="p">$</span><span class="t">curl -sL <span class="u">__B__</span></span><span class="c"># 取回</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -d "内容" <span class="u">__B__</span></span><span class="c"># 保存文本</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -T ./file <span class="u">__B__</span></span><span class="c"># 上传文件</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -OJ <span class="u">__D__</span></span><span class="c"># 下载</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -X DELETE <span class="u">__B__</span></span><span class="c"># 清空</span></div>
+  </div>
+  <div class="foot-line">
+    <span>存储 __FILE_NAME__ · 文本 __MAXS__ · 二进制 __MAXBS__ · __VER__</span>
+  </div>
+</footer>
+</main>
+
+<script>
+(function(){
+  var KEY='clip-theme',root=document.documentElement,btn=document.getElementById('theme');
+  function pref(){return root.getAttribute('data-theme')||(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}
+  function paint(){if(!btn)return;var p=pref();btn.textContent=p==='light'?'\u263e':'\u2600';btn.title=p==='light'?'切换到暗色':'切换到亮色';}
+  var saved=localStorage.getItem(KEY);if(saved)root.setAttribute('data-theme',saved);
+  if(btn)btn.addEventListener('click',function(){var next=pref()==='light'?'dark':'light';root.setAttribute('data-theme',next);localStorage.setItem(KEY,next);paint();});
+  paint();
+})();
+</script>
+<script>
+const msg=document.getElementById('msg'),T='__TOK__';
+const endpoint=__PATH_JSON__;
+const MAXT=__MAXN__,MAXB=__MAXBN__;
+function setMsg(t,c){msg.textContent=t;msg.className=c||'';}
+function q(){return T?'?token='+encodeURIComponent(T):'';}
+function hdr(x){const h=Object.assign({},x||{});if(T)h['X-Clip-Token']=T;return h;}
+const onceEl=document.getElementById('once');
+function onceHdr(){return onceEl&&onceEl.checked?{'X-Clip-Once':'1'}:{};}
+function fmt(n){const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return (i?n.toFixed(1):n)+u[i];}
+const ta=document.getElementById('c');
+const cp=document.getElementById('cp');
+if(cp)cp.onclick=()=>{const t=ta.value;const done=()=>{cp.textContent='已复制';setTimeout(()=>cp.textContent='复制全文',1200);};if(navigator.clipboard)navigator.clipboard.writeText(t).then(done);else done();};
+const saveBtn=document.getElementById('save');
+if(saveBtn)saveBtn.onclick=async()=>{
+  if(!ta.value){setMsg('内容为空','err');return;}
+  if(new Blob([ta.value]).size>MAXT){setMsg('内容超过 '+fmt(MAXT)+' 上限','err');return;}
+  setMsg('保存中…');
+  try{
+    const r=await fetch(endpoint+q(),{method:'POST',headers:hdr(Object.assign({'Content-Type':'text/plain; charset=utf-8','X-Requested-With':'fetch'},onceHdr())),body:ta.value});
+    const j=await r.json();
+    if(!r.ok){setMsg(j.error||('失败 '+r.status),'err');return;}
+    setMsg('已保存 '+j.bytes+' 字节','ok');
+    saveBtn.classList.remove('pulse');void saveBtn.offsetWidth;saveBtn.classList.add('pulse');
+  }catch(e){setMsg('保存失败：'+e,'err');}
+};
+const clr=document.getElementById('clr');
+if(clr)clr.onclick=async()=>{if(!confirm('清空内容？'))return;await fetch(endpoint+q(),{method:'DELETE',headers:hdr()});if(ta){ta.value='';setMsg('已清空','ok');}else{location.reload();}};
+const fileInput=document.getElementById('file');
+const onceLink=document.getElementById('onceLink');
+async function upload(f){
+  if(f.size>MAXB){setMsg('文件超过 '+fmt(MAXB)+' 上限','err');return;}
+  const once=!!(onceEl&&onceEl.checked);
+  setMsg('上传中…');
+  try{
+    const r=await fetch(endpoint+q(),{method:'PUT',headers:hdr(Object.assign({'Content-Type':f.type||'application/octet-stream','X-Clip-Filename':encodeURIComponent(f.name),'X-Requested-With':'fetch'},onceHdr())),body:f});
+    const j=await r.json();
+    if(!r.ok){setMsg(j.error||('失败 '+r.status),'err');return;}
+    if(once){
+      // 阅后即焚：不自动刷新，避免刷新请求立即消耗内容
+      if(onceLink){
+        onceLink.href=(endpoint==='/'?'/raw':endpoint)+q();
+        onceLink.hidden=false;
+      }
+      setMsg('已上传 '+fmt(f.size)+'，阅后即焚：点「打开（仅一次）」查看','ok');
+    }else{
+      if(onceLink)onceLink.hidden=true;
+      setMsg('已上传 '+fmt(f.size),'ok');
+      setTimeout(()=>location.reload(),300);
+    }
+  }catch(e){setMsg('上传失败：'+e,'err');}
+}
+if(fileInput)fileInput.onchange=()=>{const f=fileInput.files[0];if(f)upload(f);};
+if(onceLink)onceLink.addEventListener('click',()=>{
+  setMsg('已打开，内容将被消耗','ok');
+  setTimeout(()=>{onceLink.hidden=true;},800);
+});
+function isTextFile(f){
+  if(f.type.startsWith('text/'))return true;
+  if(f.type==='application/json'||f.type==='application/xml')return true;
+  return /\.(txt|md|markdown|json|ya?ml|toml|ini|conf|cfg|log|csv|tsv|xml|html?|css|jsx?|tsx?|rs|py|go|rb|java|c|h|cpp|hpp|sh|bash|zsh|fish|sql|env)$/i.test(f.name);
+}
+document.addEventListener('dragover',e=>{e.preventDefault();});
+document.addEventListener('drop',e=>{
+  if(!e.dataTransfer||!e.dataTransfer.files.length)return;
+  e.preventDefault();
+  const f=e.dataTransfer.files[0];
+  if(ta&&isTextFile(f)&&f.size<=MAXT){f.text().then(t=>{ta.value=t;setMsg('已读入 '+f.name+'，点保存上传','ok');});}
+  else upload(f);
+});
+if(ta){
+  ta.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();saveBtn.click();}});
+  ta.addEventListener('dragover',e=>{e.preventDefault();ta.classList.add('drop');});
+  ta.addEventListener('dragleave',()=>ta.classList.remove('drop'));
+  ta.addEventListener('drop',()=>ta.classList.remove('drop'));
+}
+</script>
+</body></html>

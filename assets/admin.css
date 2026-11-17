@@ -1,0 +1,45 @@
+/* 后台专用样式（叠加在 style.css 之上） */
+table{width:100%;border-collapse:collapse;font:12.5px/1.6 var(--font-mono)}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--text-3);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.1em;white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:var(--surface-2)}
+.panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:6px 8px;margin-top:12px;overflow:auto;box-shadow:var(--shadow-soft)}
+.panel.pad{padding:16px 18px}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;border:1px solid var(--border-strong);color:var(--text-2);white-space:nowrap}
+.pill.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.pill.bad{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent);background:color-mix(in srgb,var(--danger) 10%,transparent)}
+.muted{color:var(--text-3)}
+.link{color:var(--accent);word-break:break-all}
+form.share{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:14px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font:600 11px var(--font-mono);color:var(--text-3);letter-spacing:.08em;text-transform:uppercase}
+input,select{
+  background:var(--surface-2);color:var(--text);
+  border:1px solid var(--border);border-radius:9px;padding:9px 11px;
+  font:13px var(--font-ui);outline:none;
+}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+button.mini{padding:6px 11px;font-size:12.5px;border-radius:8px}
+tr .actions{white-space:nowrap;display:flex;gap:6px}
+section{margin-top:8px}
+
+/* 全屏模态遮罩（确认对话框） */
+.modal{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(6,6,10,.6);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.modal[hidden]{display:none}
+.modal-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);padding:22px;box-shadow:var(--shadow);animation:rise .25s cubic-bezier(.16,1,.3,1) both}
+.modal-card p{margin:0 0 18px;font-size:14.5px;line-height:1.6}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px}
+
+/* 轻量提示 Toast */
+.toast{
+  position:fixed;left:50%;bottom:30px;z-index:1100;
+  padding:11px 18px;border-radius:10px;border:1px solid var(--border-strong);
+  background:var(--surface-2);color:var(--text);font:600 13px var(--font-ui);
+  box-shadow:var(--shadow);pointer-events:none;
+  opacity:0;visibility:hidden;transform:translateX(-50%) translateY(10px);
+  transition:opacity .2s,transform .2s,visibility .2s;
+}
+.toast.show{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0)}
+.toast.err{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
+.toast.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent)}

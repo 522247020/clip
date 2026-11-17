@@ -1,0 +1,17 @@
+[package]
+name = "clip"
+version = "5.1.0"
+edition = "2024"
+description = "极简网页剪贴板：文本可编辑、图片可预览、二进制可下载"
+
+[dependencies]
+pbkdf2 = "0.13.0"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+sha2 = "0.11.0"
+tiny_http = "0.12.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

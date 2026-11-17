@@ -1,3 +1,8 @@
-slip.txt
-slip.txt.files/
-__pycache__/
+/target
+
+# 运行时数据
+/clip.txt
+/clip.txt.files/
+*.db
+*.db-wal
+*.db-shm
