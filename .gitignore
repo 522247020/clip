@@ -1,4 +1,5 @@
 /target
+/dist
 
 # 运行时数据
 /clip.txt

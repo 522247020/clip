@@ -1,0 +1,31 @@
+[Unit]
+Description=clip - 极简网页剪贴板
+Documentation=https://github.com/522247020/clip
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clip
+Group=clip
+WorkingDirectory=/opt/clip
+EnvironmentFile=/etc/clip/clip.env
+ExecStart=/opt/clip/clip
+Restart=on-failure
+RestartSec=2
+
+# 安全加固：系统只读，仅 /opt/clip 可写
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/clip
+
+# 直接监听 80/443 时需要；监听 8080 可删掉这两行
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

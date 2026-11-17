@@ -188,8 +188,55 @@ assets/admin.css     # 后台专用样式（表格、表单、模态框）
 assets/home.html     # 前台页面
 assets/admin.html    # 后台页面
 assets/login.html    # 登录页
+deploy/clip.service  # systemd 服务示例
+deploy/clip.env.example  # 环境变量示例
 README.md
 ```
+
+## 部署到 Linux 服务器（替换 Python 版）
+
+推荐构建**静态 musl** 二进制，不依赖服务器 glibc，旧版 CentOS / Alibaba Cloud Linux 也能直接跑：
+
+```bash
+# 本机用 Docker 构建（需要 Docker）
+docker run --rm \
+  -v "$PWD":/src \
+  -v "$HOME/.cargo/config.toml":/usr/local/cargo/config.toml:ro \
+  -w /src rust:1.90-alpine \
+  sh -c "apk add --no-cache musl-dev && cargo build --release --target x86_64-unknown-linux-musl"
+
+# 产物
+target/x86_64-unknown-linux-musl/release/clip
+file target/x86_64-unknown-linux-musl/release/clip   # 应为 statically linked
+```
+
+上传并安装：
+
+```bash
+scp clip root@SERVER:/opt/clip/clip
+ssh root@SERVER
+
+chmod +x /opt/clip/clip
+groupadd -r clip 2>/dev/null || true
+useradd -r -g clip -d /opt/clip -s /usr/sbin/nologin clip 2>/dev/null || true
+mkdir -p /opt/clip/data /etc/clip
+chown -R clip:clip /opt/clip
+
+cp deploy/clip.env.example /etc/clip/clip.env
+chmod 600 /etc/clip/clip.env
+vi /etc/clip/clip.env          # 至少修改 CLIP_ADMIN_PASSWORD
+
+cp deploy/clip.service /etc/systemd/system/clip.service
+systemctl daemon-reload
+systemctl enable --now clip
+systemctl status clip --no-pager
+```
+
+**从旧 Python 版迁移**：把 `CLIP_FILE` / `CLIP_STORE` 指向旧数据路径即可
+（两边都是 `clip.txt` + `clip.txt.files` 布局），首次启动会自动扫描旧文件并写入 SQLite。
+先停掉旧 Python 进程，再用相同端口启动 `clip`。
+
+> 静态 musl 二进制不依赖服务器 glibc；若服务器是 arm64，请改用对应 target 重新构建。
 
 ## 安全建议
 
