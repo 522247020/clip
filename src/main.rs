@@ -615,6 +615,36 @@ fn header_value_owned(req: &Request, name: &'static str) -> Option<String> {
     header_value(req, name).map(|s| s.to_string())
 }
 
+/// 由代理头 / Host 头拼出当前访问源，例如 `https://copy.mhwy.work`。
+fn build_origin(forwarded_proto: Option<&str>, secure: bool, host: Option<&str>) -> String {
+    let scheme = forwarded_proto
+        .map(|v| v.split(',').next().unwrap_or(v).trim().to_ascii_lowercase())
+        .filter(|s| s == "http" || s == "https")
+        .unwrap_or_else(|| {
+            if secure {
+                "https".to_string()
+            } else {
+                "http".to_string()
+            }
+        });
+    let host = host
+        .map(|v| v.split(',').next().unwrap_or(v).trim().to_string())
+        .map(|s| {
+            s.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '[' | ']'))
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "localhost".to_string());
+    format!("{}://{}", scheme, host)
+}
+
+fn request_origin(req: &Request) -> String {
+    let proto = header_value(req, "X-Forwarded-Proto");
+    let host = header_value(req, "Host").or_else(|| header_value(req, "X-Forwarded-Host"));
+    build_origin(proto, req.secure(), host)
+}
+
 fn fmt_size(n: u64) -> String {
     let mut v = n as f64;
     let units = ["B", "KB", "MB", "GB"];
@@ -1264,7 +1294,13 @@ fn disposition_header(filename: &str) -> Header {
     mk_header("Content-Disposition", &value)
 }
 
-fn render_page(cfg: &Config, path: &str, name: &str, rec: Option<&Record>) -> String {
+fn render_page(
+    cfg: &Config,
+    origin: &str,
+    path: &str,
+    name: &str,
+    rec: Option<&Record>,
+) -> String {
     let empty: Vec<u8> = Vec::new();
     let body_bytes: &[u8] = rec.map(|r| r.body.as_slice()).unwrap_or(&empty);
     let content_type = rec.map(|r| r.content_type.clone()).unwrap_or_default();
@@ -1387,7 +1423,8 @@ fn render_page(cfg: &Config, path: &str, name: &str, rec: Option<&Record>) -> St
         .replace(
             "__B__",
             &html_escape(&format!(
-                "https://HOST{}",
+                "{}{}",
+                origin,
                 if name.is_empty() {
                     "/".to_string()
                 } else {
@@ -1395,7 +1432,7 @@ fn render_page(cfg: &Config, path: &str, name: &str, rec: Option<&Record>) -> St
                 }
             )),
         )
-        .replace("__D__", &html_escape(&format!("https://HOST{}", raw_base)))
+        .replace("__D__", &html_escape(&format!("{}{}", origin, raw_base)))
         .replace("__PATH_JSON__", &json_escape(path))
         .replace("__TOK__", &js_escape(cfg.token.as_str()))
         .replace("__MAXN__", &cfg.max_text.to_string())
@@ -1740,7 +1777,8 @@ fn do_get(state: &AppState, req: Request, path: String, query: String) {
     if rec.is_some() {
         state.db.touch_file(&name, false, now());
     }
-    let html = render_page(cfg, &path, &name, rec.as_ref());
+    let origin = request_origin(&req);
+    let html = render_page(cfg, &origin, &path, &name, rec.as_ref());
     consume_once(state, &name, &rec);
     respond(
         state,
@@ -2619,5 +2657,30 @@ mod tests {
         assert_eq!(parse_switch("0"), Some(false));
         assert_eq!(parse_switch("off"), Some(false));
         assert_eq!(parse_switch("maybe"), None);
+    }
+
+    #[test]
+    fn origin_building() {
+        assert_eq!(
+            build_origin(Some("https"), false, Some("copy.mhwy.work")),
+            "https://copy.mhwy.work"
+        );
+        assert_eq!(
+            build_origin(None, false, Some("127.0.0.1:28080")),
+            "http://127.0.0.1:28080"
+        );
+        assert_eq!(
+            build_origin(None, true, Some("example.com")),
+            "https://example.com"
+        );
+        assert_eq!(
+            build_origin(Some("https, http"), false, Some("a.com, b.com")),
+            "https://a.com"
+        );
+        assert_eq!(build_origin(None, false, None), "http://localhost");
+        assert_eq!(
+            build_origin(Some("javascript"), false, Some("<x>")),
+            "http://x"
+        );
     }
 }
