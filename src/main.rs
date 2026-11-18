@@ -9,7 +9,7 @@
 //! curl 和浏览器访问同一地址，靠 Accept 头自动区分返回纯文本还是网页。
 //! 图片可直接预览，二进制文件在网页上提供下载（上限 10MB）。
 //!
-//! 另有后台、SQLite 记录文件与访问日志、以及不会过期的长期下载链接。
+//! 另有后台、SQLite 记录文件与访问日志，以及公告、逐文件只读 / 长期等功能。
 //!
 //! 环境变量：
 //!     CLIP_HOST           监听地址，默认 0.0.0.0
@@ -25,7 +25,7 @@
 //!     CLIP_ADMIN_PASSWORD 后台登录口令，默认取 CLIP_ADMIN_TOKEN
 //!     CLIP_ADMIN_TOKEN    后台口令回退，默认取 CLIP_TOKEN；都空则后台公开
 //!     CLIP_DB             SQLite 数据库路径，默认 <CLIP_STORE>/.meta/clip.db
-//!     CLIP_SHARE_DIR      长期下载文件目录，默认 <CLIP_STORE>/.shares
+//!     CLIP_SHARE_DIR      旧长期链接快照目录，默认 <CLIP_STORE>/.shares（仅兼容读取）
 //!
 //! 接口：
 //!     GET  /              浏览器→网页；curl→纯文本原文
@@ -33,7 +33,7 @@
 //!     GET  /<name>        具名内容
 //!     POST /  PUT /       保存（请求体即内容，覆盖旧内容；?once=1 阅后即焚）
 //!     DELETE /            清空
-//!     GET  /d/<token>     长期下载（不过期，除非创建时指定）
+//!     GET  /d/<token>     兼容旧长期下载链接（不再新建）
 //!     GET  <后台路径>      后台页面（未登录时显示登录表单）
 //!     POST <后台路径>/login   后台登录
 //!     GET  /healthz       健康检查
@@ -845,18 +845,12 @@ struct FileRow {
 
 #[derive(Clone)]
 struct ShareRow {
-    token: String,
     name: String,
     content_type: String,
     filename: Option<String>,
-    size: i64,
-    created_at: i64,
     expires_at: Option<i64>,
     max_downloads: Option<i64>,
     downloads: i64,
-    last_access: Option<i64>,
-    note: Option<String>,
-    readonly: bool,
 }
 
 #[derive(Clone)]
@@ -925,8 +919,7 @@ impl Db {
                max_downloads INTEGER,
                downloads INTEGER NOT NULL DEFAULT 0,
                last_access INTEGER,
-               note TEXT,
-               readonly INTEGER NOT NULL DEFAULT 0
+               note TEXT
              );
              CREATE TABLE IF NOT EXISTS access_log(
                id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -953,12 +946,6 @@ impl Db {
         if !has_column(&conn, "files", "permanent") {
             let _ = conn.execute(
                 "ALTER TABLE files ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0",
-                [],
-            );
-        }
-        if !has_column(&conn, "shares", "readonly") {
-            let _ = conn.execute(
-                "ALTER TABLE shares ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0",
                 [],
             );
         }
@@ -1254,171 +1241,24 @@ impl Db {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn create_share(
-        &self,
-        token: &str,
-        name: &str,
-        content_type: &str,
-        filename: Option<&str>,
-        size: i64,
-        expires_at: Option<i64>,
-        max_downloads: Option<i64>,
-        note: &str,
-    ) -> bool {
-        let c = self.conn();
-        match c.execute(
-            "INSERT OR REPLACE INTO shares\
-             (token,name,content_type,filename,size,created_at,expires_at,max_downloads,downloads,last_access,note) \
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0,NULL,?9)",
-            params![
-                token,
-                name,
-                content_type,
-                filename,
-                size,
-                now(),
-                expires_at,
-                max_downloads,
-                if note.is_empty() { None } else { Some(note) }
-            ],
-        ) {
-            Ok(_) => true,
-            Err(e) => {
-                eprintln!("db create_share: {e}");
-                false
-            }
-        }
-    }
-
-    fn list_shares(&self) -> Vec<ShareRow> {
-        let c = self.conn();
-        let mut out = Vec::new();
-        if let Ok(mut stmt) = c.prepare(
-            "SELECT token,name,content_type,filename,size,created_at,expires_at,\
-             max_downloads,downloads,last_access,note,readonly \
-             FROM shares ORDER BY created_at DESC",
-        )
-            && let Ok(rows) = stmt.query_map([], |r| {
-                Ok(ShareRow {
-                    token: r.get(0)?,
-                    name: r.get(1)?,
-                    content_type: r.get(2)?,
-                    filename: r.get(3)?,
-                    size: r.get(4)?,
-                    created_at: r.get(5)?,
-                    expires_at: r.get(6)?,
-                    max_downloads: r.get(7)?,
-                    downloads: r.get(8)?,
-                    last_access: r.get(9)?,
-                    note: r.get(10)?,
-                    readonly: r.get::<_, i64>(11)? != 0,
-                })
-            }) {
-                out.extend(rows.flatten());
-            }
-        out
-    }
-
     fn get_share(&self, token: &str) -> Option<ShareRow> {
         let c = self.conn();
         c.query_row(
-            "SELECT token,name,content_type,filename,size,created_at,expires_at,\
-             max_downloads,downloads,last_access,note,readonly \
+            "SELECT name,content_type,filename,expires_at,max_downloads,downloads \
              FROM shares WHERE token=?1",
             params![token],
             |r| {
                 Ok(ShareRow {
-                    token: r.get(0)?,
-                    name: r.get(1)?,
-                    content_type: r.get(2)?,
-                    filename: r.get(3)?,
-                    size: r.get(4)?,
-                    created_at: r.get(5)?,
-                    expires_at: r.get(6)?,
-                    max_downloads: r.get(7)?,
-                    downloads: r.get(8)?,
-                    last_access: r.get(9)?,
-                    note: r.get(10)?,
-                    readonly: r.get::<_, i64>(11)? != 0,
+                    name: r.get(0)?,
+                    content_type: r.get(1)?,
+                    filename: r.get(2)?,
+                    expires_at: r.get(3)?,
+                    max_downloads: r.get(4)?,
+                    downloads: r.get(5)?,
                 })
             },
         )
         .ok()
-    }
-
-    fn find_share_by_name(&self, name: &str) -> Option<ShareRow> {
-        let c = self.conn();
-        c.query_row(
-            "SELECT token,name,content_type,filename,size,created_at,expires_at,\
-             max_downloads,downloads,last_access,note,readonly \
-             FROM shares WHERE name=?1 ORDER BY created_at ASC LIMIT 1",
-            params![name],
-            |r| {
-                Ok(ShareRow {
-                    token: r.get(0)?,
-                    name: r.get(1)?,
-                    content_type: r.get(2)?,
-                    filename: r.get(3)?,
-                    size: r.get(4)?,
-                    created_at: r.get(5)?,
-                    expires_at: r.get(6)?,
-                    max_downloads: r.get(7)?,
-                    downloads: r.get(8)?,
-                    last_access: r.get(9)?,
-                    note: r.get(10)?,
-                    readonly: r.get::<_, i64>(11)? != 0,
-                })
-            },
-        )
-        .ok()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn update_share(
-        &self,
-        token: &str,
-        content_type: &str,
-        filename: Option<&str>,
-        size: i64,
-        expires_at: Option<i64>,
-        max_downloads: Option<i64>,
-        note: &str,
-    ) -> bool {
-        let c = self.conn();
-        match c.execute(
-            "UPDATE shares SET content_type=?2, filename=?3, size=?4, \
-             expires_at=?5, max_downloads=?6, note=?7 WHERE token=?1",
-            params![
-                token,
-                content_type,
-                filename,
-                size,
-                expires_at,
-                max_downloads,
-                if note.is_empty() { None } else { Some(note) }
-            ],
-        ) {
-            Ok(_) => true,
-            Err(e) => {
-                eprintln!("db update_share: {e}");
-                false
-            }
-        }
-    }
-
-    fn set_share_readonly(&self, token: &str, on: bool) -> bool {
-        let c = self.conn();
-        match c.execute(
-            "UPDATE shares SET readonly=?2 WHERE token=?1",
-            params![token, if on { 1i64 } else { 0i64 }],
-        ) {
-            Ok(n) => n > 0,
-            Err(e) => {
-                eprintln!("db set_share_readonly: {e}");
-                false
-            }
-        }
     }
 
     fn bump_share(&self, token: &str) {
@@ -2224,7 +2064,7 @@ fn do_delete(state: &AppState, req: Request, path: String, query: String) {
     );
 }
 
-// ---- 长期下载 ----
+// ---- 旧长期链接（兼容读取） ----
 
 fn do_share_download(state: &AppState, req: Request, token: String) {
     let share = match state.db.get_share(&token) {
@@ -2334,13 +2174,7 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
     if rest.is_empty() && is_get {
         state.db.sync_files(&state.cfg);
         let files = state.db.list_files();
-        let shares = state.db.list_shares();
-        let chip = format!(
-            "{} 文件 · {} 长期链接 · {} 条日志",
-            files.len(),
-            shares.len(),
-            state.db.log_count()
-        );
+        let chip = format!("{} 文件 · {} 条日志", files.len(), state.db.log_count());
         let home = if state.cfg.token.is_empty() {
             "/".to_string()
         } else {
@@ -2363,10 +2197,6 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
             .replace("__PWDNOTE__", &html_escape(&pwd_note))
             .replace("__ANNOUNCEMENT__", &html_escape(&announcement))
             .replace("__DB__", &html_escape(&state.cfg.db_path.to_string_lossy()))
-            .replace(
-                "__SHAREDIR__",
-                &html_escape(&state.cfg.share_dir.to_string_lossy()),
-            )
             .replace("__VER__", VER);
         return respond(
             state,
@@ -2430,55 +2260,6 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
         }
     }
 
-    if rest == "api/shares" {
-        if is_get {
-            let shares = state.db.list_shares();
-            let mut s = String::from("[");
-            for (i, sh) in shares.iter().enumerate() {
-                if i > 0 {
-                    s.push(',');
-                }
-                s.push_str(&format!(
-                    "{{\"token\":{},\"name\":{},\"content_type\":{},\"filename\":{},\"size\":{},\"created_at\":{},\"expires_at\":{},\"max_downloads\":{},\"downloads\":{},\"last_access\":{},\"note\":{},\"readonly\":{},\"url\":{}}}",
-                    json_escape(&sh.token),
-                    json_escape(&sh.name),
-                    json_escape(&sh.content_type),
-                    sh.filename.as_deref().map(json_escape).unwrap_or_else(|| "null".into()),
-                    sh.size,
-                    sh.created_at,
-                    sh.expires_at.map(|v| v.to_string()).unwrap_or_else(|| "null".into()),
-                    sh.max_downloads.map(|v| v.to_string()).unwrap_or_else(|| "null".into()),
-                    sh.downloads,
-                    sh.last_access.map(|v| v.to_string()).unwrap_or_else(|| "null".into()),
-                    sh.note.as_deref().map(json_escape).unwrap_or_else(|| "null".into()),
-                    sh.readonly,
-                    json_escape(&format!("/d/{}", sh.token))
-                ));
-            }
-            s.push(']');
-            return json_response(state, req, 200, s.into_bytes());
-        }
-        if *method == Method::Post {
-            return admin_create_share(state, req);
-        }
-        if *method == Method::Delete {
-            let token = query_get(&query, "token").unwrap_or_default();
-            if token.is_empty() {
-                return json_response(state, req, 400, json_error("缺少 token"));
-            }
-            if state
-                .db
-                .get_share(&token)
-                .map(|s| s.readonly)
-                .unwrap_or(false)
-            {
-                return json_response(state, req, 403, json_error("该链接已锁定，禁止删除"));
-            }
-            remove_share(state, &token);
-            return json_response(state, req, 200, b"{\"ok\":true}".to_vec());
-        }
-    }
-
     if rest == "api/logs" {
         if is_get {
             let limit = query_get(&query, "limit")
@@ -2522,10 +2303,6 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
 
     if rest == "api/files/permanent" && *method == Method::Post {
         return admin_set_file_permanent(state, req);
-    }
-
-    if rest == "api/shares/readonly" && *method == Method::Post {
-        return admin_set_share_readonly(state, req);
     }
 
     if rest == "api/announcement" && *method == Method::Post {
@@ -2729,44 +2506,6 @@ fn admin_set_file_readonly(state: &AppState, mut req: Request) {
     )
 }
 
-fn admin_set_share_readonly(state: &AppState, mut req: Request) {
-    let body = read_body_limited(&mut req, 4096).unwrap_or_default();
-    let text = String::from_utf8_lossy(&body).into_owned();
-    let token = json_get(&text, "token").unwrap_or_default();
-    if token.is_empty() {
-        return json_response(state, req, 400, json_error("缺少 token"));
-    }
-    let on = json_get(&text, "readonly")
-        .and_then(|v| parse_switch(&v))
-        .unwrap_or(false);
-    if !state.db.set_share_readonly(&token, on) {
-        return json_response(state, req, 404, json_error("链接不存在"));
-    }
-    json_response(
-        state,
-        req,
-        200,
-        format!("{{\"ok\":true,\"readonly\":{}}}", on).into_bytes(),
-    )
-}
-
-fn admin_set_announcement(state: &AppState, mut req: Request) {
-    let body = read_body_limited(&mut req, 16 * 1024).unwrap_or_default();
-    let text = String::from_utf8_lossy(&body).into_owned();
-    let announcement: String = json_get(&text, "text")
-        .unwrap_or_default()
-        .chars()
-        .take(ANNOUNCEMENT_MAX_CHARS)
-        .collect();
-    if !state
-        .db
-        .set_setting(ANNOUNCEMENT_KEY, &announcement)
-    {
-        return json_response(state, req, 500, json_error("保存失败"));
-    }
-    json_response(state, req, 200, b"{\"ok\":true}".to_vec());
-}
-
 fn admin_set_file_permanent(state: &AppState, mut req: Request) {
     let body = read_body_limited(&mut req, 4096).unwrap_or_default();
     let text = String::from_utf8_lossy(&body).into_owned();
@@ -2796,92 +2535,21 @@ fn admin_set_file_permanent(state: &AppState, mut req: Request) {
     )
 }
 
-fn admin_create_share(state: &AppState, mut req: Request) {
-    let body = read_body_limited(&mut req, 65536).unwrap_or_default();
+fn admin_set_announcement(state: &AppState, mut req: Request) {
+    let body = read_body_limited(&mut req, 16 * 1024).unwrap_or_default();
     let text = String::from_utf8_lossy(&body).into_owned();
-
-    let name = json_get(&text, "name").unwrap_or_default();
-    let valid = name.is_empty() || name_of(&state.cfg, &format!("/{}", name), false).is_some();
-    if !valid {
-        return json_response(state, req, 400, json_error("非法名称"));
+    let announcement: String = json_get(&text, "text")
+        .unwrap_or_default()
+        .chars()
+        .take(ANNOUNCEMENT_MAX_CHARS)
+        .collect();
+    if !state
+        .db
+        .set_setting(ANNOUNCEMENT_KEY, &announcement)
+    {
+        return json_response(state, req, 500, json_error("保存失败"));
     }
-    let expires_in: i64 = json_get(&text, "expires_in")
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let max_downloads: i64 = json_get(&text, "max_downloads")
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let note = json_get(&text, "note").unwrap_or_default();
-
-    let rec = match load(&state.cfg, &name) {
-        Some(r) => r,
-        None => return json_response(state, req, 404, json_error("文件不存在")),
-    };
-
-    // 同一文件已有长期链接时复用原 token，保持地址不变。
-    let existing = state.db.find_share_by_name(&name);
-    if existing.as_ref().map(|s| s.readonly).unwrap_or(false) {
-        return json_response(state, req, 403, json_error("该链接已锁定，请先解锁"));
-    }
-    let token = match &existing {
-        Some(s) => s.token.clone(),
-        None => random_hex(16),
-    };
-    if let Err(e) = fs::create_dir_all(&state.cfg.share_dir) {
-        eprintln!("创建长期下载目录失败: {e}");
-        return json_response(state, req, 500, json_error("创建目录失败"));
-    }
-    if let Err(e) = fs::write(state.cfg.share_dir.join(&token), &rec.body) {
-        eprintln!("写入长期下载文件失败: {e}");
-        return json_response(state, req, 500, json_error("写入失败"));
-    }
-
-    let ts = now();
-    let expires_at = if expires_in > 0 {
-        Some(ts + expires_in)
-    } else {
-        None
-    };
-    let max = if max_downloads > 0 {
-        Some(max_downloads)
-    } else {
-        None
-    };
-    let ok = if existing.is_some() {
-        state.db.update_share(
-            &token,
-            &rec.content_type,
-            rec.filename.as_deref(),
-            rec.body.len() as i64,
-            expires_at,
-            max,
-            &note,
-        )
-    } else {
-        state.db.create_share(
-            &token,
-            &name,
-            &rec.content_type,
-            rec.filename.as_deref(),
-            rec.body.len() as i64,
-            expires_at,
-            max,
-            &note,
-        )
-    };
-    if !ok {
-        if existing.is_none() {
-            let _ = fs::remove_file(state.cfg.share_dir.join(&token));
-        }
-        return json_response(state, req, 500, json_error("写入数据库失败"));
-    }
-
-    let out = format!(
-        "{{\"ok\":true,\"token\":{},\"url\":{}}}",
-        json_escape(&token),
-        json_escape(&format!("/d/{}", token))
-    );
-    json_response(state, req, 200, out.into_bytes());
+    json_response(state, req, 200, b"{\"ok\":true}".to_vec());
 }
 
 fn handle(state: Arc<AppState>, req: Request) {

@@ -16,7 +16,7 @@
     </span>
     <div class="brand-text">
       <h1>后台</h1>
-      <p class="hint">文件 · 长期下载 · 访问记录，数据存于 SQLite</p>
+      <p class="hint">文件 · 公告 · 访问记录，数据存于 SQLite</p>
     </div>
   </div>
   <div class="tools">
@@ -45,19 +45,6 @@
 </section>
 
 <section>
-  <p class="section-label">长期下载</p>
-  <form class="share" id="shareForm">
-    <div class="field"><label>文件</label><select id="shareName"></select></div>
-    <div class="field"><label>有效期</label><select id="shareExp"><option value="0">永久</option><option value="86400">1 天</option><option value="604800">7 天</option><option value="2592000">30 天</option></select></div>
-    <div class="field"><label>次数上限</label><input id="shareMax" type="number" min="0" value="0" style="width:110px"></div>
-    <div class="field"><label>备注</label><input id="shareNote" placeholder="可选"></div>
-    <button class="primary" type="submit">创建链接</button>
-  </form>
-  <div id="shareResult"></div>
-  <div class="panel"><table id="shares"><thead><tr><th>链接</th><th>创建</th><th>有效期</th><th>下载</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div>
-</section>
-
-<section>
   <p class="section-label">访问记录</p>
   <div class="row">
     <button id="refreshLogs" type="button">刷新</button>
@@ -79,7 +66,7 @@
 </section>
 
 <footer class="foot-line">
-  <span>DB __DB__ · 长期下载 __SHAREDIR__</span>
+  <span>DB __DB__</span>
   <span>__VER__</span>
 </footer>
 </main>
@@ -145,8 +132,7 @@ function label(n){return n===''?'／（根内容）':'/'+n;}
 async function loadFiles(){
   const r=await api(BASE+'/api/files');const files=await r.json();
   const tb=document.querySelector('#files tbody');
-  const sel=document.getElementById('shareName');
-  tb.innerHTML='';sel.innerHTML='<option value="">／（根内容）</option>';
+  tb.innerHTML='';
   if(!files.length){tb.innerHTML='<tr><td colspan="8" class="muted">暂无文件</td></tr>';return;}
   for(const f of files){
     const tr=document.createElement('tr');
@@ -159,7 +145,6 @@ async function loadFiles(){
       <td><button class="mini" data-perm="${esc(f.name)}" data-permval="${f.permanent?0:1}">${f.permanent?'长期（取消）':'设为长期'}</button></td>
       <td><div class="actions"><a class="btn mini" href="${esc(f.url)}" target="_blank" rel="noreferrer">打开</a><button class="mini" data-ro="${esc(f.name)}" data-roval="${f.readonly?0:1}">${f.readonly?'解锁':'设为只读'}</button><button class="mini danger" data-del="${esc(f.name)}"${f.readonly?' disabled':''}>删除</button></div></td>`;
     tb.appendChild(tr);
-    const o=document.createElement('option');o.value=f.name;o.textContent=label(f.name)+'  '+fmt(f.size);sel.appendChild(o);
   }
   tb.querySelectorAll('button[data-perm]').forEach(b=>b.onclick=async()=>{
     const on=b.dataset.permval==='1';
@@ -178,58 +163,9 @@ async function loadFiles(){
   tb.querySelectorAll('button[data-del]').forEach(b=>b.onclick=async()=>{
     if(!await ask('删除文件「'+label(b.dataset.del)+'」？','删除'))return;
     await api(BASE+'/api/files?name='+encodeURIComponent(b.dataset.del),{method:'DELETE'});
-    setMsg('已删除','ok');loadFiles();loadShares();
+    setMsg('已删除','ok');loadFiles();
   });
 }
-
-async function loadShares(){
-  const r=await api(BASE+'/api/shares');const shares=await r.json();
-  const tb=document.querySelector('#shares tbody');tb.innerHTML='';
-  if(!shares.length){tb.innerHTML='<tr><td colspan="6" class="muted">暂无长期链接</td></tr>';return;}
-  for(const s of shares){
-    const expired=s.expires_at&&s.expires_at*1000<Date.now();
-    const over=s.max_downloads&&s.downloads>=s.max_downloads;
-    const url=location.origin+'/d/'+s.token;
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td><span class="link">${esc(url)}</span><br><span class="muted">${esc(label(s.name))} · ${fmt(s.size)}${s.note?' · '+esc(s.note):''}</span></td>
-      <td class="mono muted">${time(s.created_at)}</td>
-      <td class="mono">${s.expires_at?time(s.expires_at):'永久'}</td>
-      <td class="mono">${s.downloads}${s.max_downloads?' / '+s.max_downloads:''}</td>
-      <td>${expired||over?'<span class="pill bad">失效</span>':'<span class="pill ok">有效</span>'}</td>
-      <td><div class="actions"><button class="mini" data-copy="${esc(url)}">复制</button><button class="mini" data-lock="${esc(s.token)}" data-lockval="${s.readonly?0:1}">${s.readonly?'解锁':'锁定'}</button><button class="mini danger" data-rm="${esc(s.token)}"${s.readonly?' disabled':''}>删除</button></div></td>`;
-    tb.appendChild(tr);
-  }
-  tb.querySelectorAll('button[data-copy]').forEach(b=>b.onclick=()=>{navigator.clipboard.writeText(b.dataset.copy);setMsg('链接已复制','ok');});
-  tb.querySelectorAll('button[data-lock]').forEach(b=>b.onclick=async()=>{
-    const on=b.dataset.lockval==='1';
-    const r=await api(BASE+'/api/shares/readonly',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:b.dataset.lock,readonly:on?'1':'0'})});
-    const j=await r.json();
-    if(!r.ok){setMsg(j.error||'修改失败','err');return;}
-    setMsg(on?'链接已锁定':'链接已解锁','ok');loadShares();
-  });
-  tb.querySelectorAll('button[data-rm]').forEach(b=>b.onclick=async()=>{
-    if(!await ask('删除该长期链接？','删除'))return;
-    await api(BASE+'/api/shares?token='+encodeURIComponent(b.dataset.rm),{method:'DELETE'});
-    setMsg('已删除','ok');loadShares();
-  });
-}
-
-document.getElementById('shareForm').onsubmit=async e=>{
-  e.preventDefault();
-  const body=JSON.stringify({
-    name:document.getElementById('shareName').value,
-    expires_in:document.getElementById('shareExp').value,
-    max_downloads:document.getElementById('shareMax').value,
-    note:document.getElementById('shareNote').value
-  });
-  const r=await api(BASE+'/api/shares',{method:'POST',headers:{'Content-Type':'application/json'},body});
-  const j=await r.json();
-  if(!r.ok){setMsg(j.error||'创建失败','err');return;}
-  const url=location.origin+j.url;
-  document.getElementById('shareResult').innerHTML='<div class="panel pad"><span class="link">'+esc(url)+'</span> <button class="mini" id="copyNew" type="button">复制</button></div>';
-  document.getElementById('copyNew').onclick=()=>{navigator.clipboard.writeText(url);setMsg('已复制','ok');};
-  setMsg('已创建长期链接','ok');loadShares();
-};
 
 async function loadLogs(){
   const r=await api(BASE+'/api/logs?limit=300');const logs=await r.json();
@@ -270,7 +206,7 @@ document.getElementById('pwdForm').onsubmit=async e=>{
   setTimeout(()=>{location.href=BASE+'/login';},900);
 };
 
-loadFiles();loadShares();loadLogs();
+loadFiles();loadLogs();
 
 // 公告
 const annText=document.getElementById('announcementText');

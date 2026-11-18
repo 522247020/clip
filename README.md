@@ -4,9 +4,8 @@
 Rust 单二进制实现（`tiny_http` + `rusqlite`），自带后台、SQLite 记录与亮/暗主题。
 
 - **前台**：根路径一块内容，浏览器看网页、`curl` 拿原文。
-- **后台**：可自定义路径（`CLIP_ADMIN_PATH`）+ 登录口令，管理文件、长期下载链接与访问记录。
-- **数据库**：SQLite 记录文件元信息、长期链接、访问日志、后台口令。
-- **长期下载**：为文件生成 `/d/<token>` 快照链接，可设有效期与次数上限。
+- **后台**：可自定义路径（`CLIP_ADMIN_PATH`）+ 登录口令，管理文件、公告与访问记录。
+- **数据库**：SQLite 记录文件元信息、访问日志、后台口令。
 - **阅后即焚**：可让内容被读取一次后自动清空（`?once=1` 或 `CLIP_ONCE=1`）。
 - **长期文件**：可对单个文件标记「长期」，标记后不受 TTL 清理（时长视为 0）。
 - **只读模式**：可对单个文件设置只读；被锁定的内容拒绝保存/上传/删除，其它文件不受影响。
@@ -109,11 +108,11 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 时长视为 `0`，页面会显示「永久保留」；再次点击可取消。这个标记保存在文件元数据
 （`permanent`）和数据库中，重启、覆盖内容都不会丢失。
 
-### 长期下载
+### 长期下载（已移除）
 
-选择一个文件创建 `/d/<token>` 链接，可设有效期（默认永久）与下载次数上限，
-可复制或撤销。链接指向创建时的**快照**，不受原文件 TTL 影响；过期或超限返回 `410`。
-同一文件已有链接时，再次创建会**复用原 token / 原地址**（不会重新生成），只更新快照与设置。
+后台不再提供长期下载链接的创建与管理，文件本身可用「设为长期」来避免 TTL 清理。
+已经存在的 `/d/<token>` 链接仍然可以下载（只读兼容），但不能再新建。
+如需彻底清理，可删除数据库中的 `shares` 表和 `CLIP_SHARE_DIR` 目录。
 
 ### 访问记录
 
@@ -155,7 +154,7 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | `CLIP_ADMIN_PASSWORD` | 取 `CLIP_ADMIN_TOKEN` | 后台登录口令 |
 | `CLIP_ADMIN_TOKEN` | 取 `CLIP_TOKEN` | 后台口令回退（不作为令牌绕过） |
 | `CLIP_DB` | `<CLIP_STORE>/.meta/clip.db` | SQLite 数据库路径 |
-| `CLIP_SHARE_DIR` | `<CLIP_STORE>/.shares` | 长期下载快照目录 |
+| `CLIP_SHARE_DIR` | `<CLIP_STORE>/.shares` | 旧长期链接快照目录（仅兼容读取） |
 
 ---
 
@@ -170,22 +169,20 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | `GET` | `/<name>` | 具名内容；图片内联、二进制附件、文本渲染网页 |
 | `POST` / `PUT` | `/` 或 `/<name>` | 保存（请求体即内容） |
 | `DELETE` | `/` 或 `/<name>` | 清空 |
-| `GET` | `/d/<token>` | 长期下载 |
+| `GET` | `/d/<token>` | 兼容旧长期下载链接（不再新建） |
 | `GET` | `/healthz` | 健康检查 |
 | `GET` | `/admin` | 后台页面（未登录显示登录表单） |
 | `POST` | `/admin/login` | 登录（表单 `password=...`，成功 303） |
 | `GET` | `/admin/logout` | 退出登录 |
 | `GET` | `/admin/api/files` | 文件列表 |
 | `DELETE` | `/admin/api/files?name=<name>` | 删除文件（`name` 省略即根内容） |
-| `GET` | `/admin/api/shares` | 长期链接列表 |
-| `POST` | `/admin/api/shares` | 创建链接（JSON：`name`、`expires_in`、`max_downloads`、`note`） |
-| `DELETE` | `/admin/api/shares?token=<token>` | 撤销链接 |
+
 | `GET` | `/admin/api/logs?limit=` | 访问记录 |
 | `DELETE` | `/admin/api/logs` | 清空访问记录 |
 | `POST` | `/admin/api/password` | 修改后台口令（JSON：`current`、`new`） |
 | `POST` | `/admin/api/files/readonly` | 单个文件只读（JSON：`name`、`readonly` = `1`/`0`） |
 | `POST` | `/admin/api/files/permanent` | 单个文件长期/永久（JSON：`name`、`permanent` = `1`/`0`） |
-| `POST` | `/admin/api/shares/readonly` | 锁定/解锁长期链接（JSON：`token`、`readonly` = `1`/`0`） |
+
 | `POST` | `/admin/api/announcement` | 设置公告（JSON：`text`，空字符串即清空） |
 
 - 保存接口支持 `Content-Type: application/json`，取其中的 `content` 字段。
@@ -200,8 +197,8 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | `CLIP_FILE` | 根路径内容（纯文本文件，可直接 `cat` / 手工编辑） |
 | `CLIP_STORE/<name>` | 具名内容 |
 | `CLIP_STORE/.meta/<name>.json` | 元数据：`Content-Type`、原始文件名、`once`（阅后即焚）、`permanent`（长期） |
-| `CLIP_DB` | SQLite：`files` / `shares` / `access_log` / `settings` 四张表 |
-| `CLIP_SHARE_DIR/<token>` | 长期下载快照 |
+| `CLIP_DB` | SQLite：`files` / `access_log` / `settings`（旧库可能还有 `shares`） |
+| `CLIP_SHARE_DIR/<token>` | 旧长期链接快照（仅兼容读取） |
 
 启动及打开后台时，会把数据库与磁盘文件对齐（补齐新增、清理已删除）。
 
