@@ -1350,6 +1350,18 @@ fn render_page(
         raw_base,
         if tq.is_empty() { "?" } else { "&" }
     );
+    // 示例命令里也带上 token，否则复制出去执行会得到 401。
+    let display_base = format!(
+        "{}{}{}",
+        origin,
+        if name.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", name)
+        },
+        tq
+    );
+    let display_raw = format!("{}{}{}", origin, raw_base, tq);
     let readonly_attr = if readonly { " readonly" } else { "" };
     let readonly_hidden = if readonly { "hidden" } else { "" };
     let readonly_banner = if readonly {
@@ -1482,19 +1494,8 @@ fn render_page(
         .replace("__READONLY_HIDDEN__", readonly_hidden)
         .replace("__READONLY_JSON__", if readonly { "true" } else { "false" })
         .replace("__META__", &html_escape(&meta))
-        .replace(
-            "__B__",
-            &html_escape(&format!(
-                "{}{}",
-                origin,
-                if name.is_empty() {
-                    "/".to_string()
-                } else {
-                    format!("/{}", name)
-                }
-            )),
-        )
-        .replace("__D__", &html_escape(&format!("{}{}", origin, raw_base)))
+        .replace("__B__", &html_escape(&display_base))
+        .replace("__D__", &html_escape(&display_raw))
         .replace("__PATH_JSON__", &json_escape(path))
         .replace("__TOK__", &js_escape(cfg.token.as_str()))
         .replace("__MAXN__", &cfg.max_text.to_string())
