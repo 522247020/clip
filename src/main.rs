@@ -193,6 +193,7 @@ struct Record {
     mtime: i64,
     filename: Option<String>,
     once: bool,
+    permanent: bool,
 }
 
 fn now() -> i64 {
@@ -218,11 +219,12 @@ fn meta_path(cfg: &Config, path: &Path) -> PathBuf {
     cfg.store.join(".meta").join(format!("{}.json", base))
 }
 
-/// 读取内容文件旁边的元数据（Content-Type / 原始文件名）。
-fn meta_of(cfg: &Config, path: &Path) -> (String, Option<String>, bool) {
+/// 读取内容文件旁边的元数据（Content-Type / 原始文件名 / 一次性 / 永久）。
+fn meta_of(cfg: &Config, path: &Path) -> (String, Option<String>, bool, bool) {
     let mut content_type = mime_guess(&path.to_string_lossy());
     let mut filename = None;
     let mut once = false;
+    let mut permanent = false;
     if let Ok(s) = fs::read_to_string(meta_path(cfg, path)) {
         if let Some(v) = json_get(&s, "content_type")
             && !v.is_empty() {
@@ -230,28 +232,20 @@ fn meta_of(cfg: &Config, path: &Path) -> (String, Option<String>, bool) {
             }
         filename = json_get(&s, "filename").filter(|f| !f.is_empty());
         once = s.contains("\"once\":true");
+        permanent = s.contains("\"permanent\":true");
     }
-    (content_type, filename, once)
+    (content_type, filename, once, permanent)
 }
 
-fn save(
+fn write_meta(
     cfg: &Config,
-    name: &str,
-    body: &[u8],
+    path: &Path,
     ctype: &str,
     filename: Option<&str>,
     once: bool,
+    permanent: bool,
 ) -> std::io::Result<()> {
-    let path = target(cfg, name);
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
-    let tmp = with_suffix(&path, ".tmp");
-    fs::write(&tmp, body)?;
-    fs::rename(&tmp, &path)?;
-
-    let meta = meta_path(cfg, &path);
+    let meta = meta_path(cfg, path);
     if let Some(parent) = meta.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -265,11 +259,41 @@ fn save(
     if once {
         json.push_str(",\"once\":true");
     }
+    if permanent {
+        json.push_str(",\"permanent\":true");
+    }
     json.push('}');
     let meta_tmp = with_suffix(&meta, ".tmp");
     fs::write(&meta_tmp, json)?;
     fs::rename(&meta_tmp, &meta)?;
     Ok(())
+}
+
+fn save(
+    cfg: &Config,
+    name: &str,
+    body: &[u8],
+    ctype: &str,
+    filename: Option<&str>,
+    once: bool,
+) -> std::io::Result<()> {
+    let path = target(cfg, name);
+    // 覆盖内容时保留“永久”标记。
+    let (_, _, _, permanent) = meta_of(cfg, &path);
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    let tmp = with_suffix(&path, ".tmp");
+    fs::write(&tmp, body)?;
+    fs::rename(&tmp, &path)?;
+    write_meta(cfg, &path, ctype, filename, once, permanent)
+}
+
+fn set_meta_permanent(cfg: &Config, name: &str, on: bool) -> std::io::Result<()> {
+    let path = target(cfg, name);
+    let (ctype, filename, once, _) = meta_of(cfg, &path);
+    write_meta(cfg, &path, &ctype, filename.as_deref(), once, on)
 }
 
 fn load(cfg: &Config, name: &str) -> Option<Record> {
@@ -282,20 +306,22 @@ fn load(cfg: &Config, name: &str) -> Option<Record> {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    if cfg.ttl > 0 && now() - mtime > cfg.ttl {
+    let (content_type, filename, once, permanent) = meta_of(cfg, &path);
+    // 永久文件不受 TTL 清理（时长视为 0）。
+    if cfg.ttl > 0 && !permanent && now() - mtime > cfg.ttl {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(meta_path(cfg, &path));
         return None;
     }
 
     let body = fs::read(&path).ok()?;
-    let (content_type, filename, once) = meta_of(cfg, &path);
     Some(Record {
         body,
         content_type,
         mtime,
         filename,
         once,
+        permanent,
     })
 }
 
@@ -814,6 +840,7 @@ struct FileRow {
     last_access: Option<i64>,
     downloads: i64,
     readonly: bool,
+    permanent: bool,
 }
 
 #[derive(Clone)]
@@ -884,7 +911,8 @@ impl Db {
                updated_at INTEGER NOT NULL,
                last_access INTEGER,
                downloads INTEGER NOT NULL DEFAULT 0,
-               readonly INTEGER NOT NULL DEFAULT 0
+               readonly INTEGER NOT NULL DEFAULT 0,
+               permanent INTEGER NOT NULL DEFAULT 0
              );
              CREATE TABLE IF NOT EXISTS shares(
                token TEXT PRIMARY KEY,
@@ -919,6 +947,12 @@ impl Db {
         if !has_column(&conn, "files", "readonly") {
             let _ = conn.execute(
                 "ALTER TABLE files ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+        }
+        if !has_column(&conn, "files", "permanent") {
+            let _ = conn.execute(
+                "ALTER TABLE files ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0",
                 [],
             );
         }
@@ -999,11 +1033,25 @@ impl Db {
         }
     }
 
+    fn set_file_permanent(&self, name: &str, on: bool) -> bool {
+        let c = self.conn();
+        match c.execute(
+            "UPDATE files SET permanent=?2 WHERE name=?1",
+            params![name, if on { 1i64 } else { 0i64 }],
+        ) {
+            Ok(n) => n > 0,
+            Err(e) => {
+                eprintln!("db set_file_permanent: {e}");
+                false
+            }
+        }
+    }
+
     fn list_files(&self) -> Vec<FileRow> {
         let c = self.conn();
         let mut out = Vec::new();
         let prepared = c.prepare(
-            "SELECT name,content_type,filename,size,created_at,updated_at,last_access,downloads,readonly \
+            "SELECT name,content_type,filename,size,created_at,updated_at,last_access,downloads,readonly,permanent \
              FROM files ORDER BY (name='') DESC, updated_at DESC",
         );
         match prepared {
@@ -1018,6 +1066,7 @@ impl Db {
                     last_access: r.get(6)?,
                     downloads: r.get(7)?,
                     readonly: r.get::<_, i64>(8)? != 0,
+                    permanent: r.get::<_, i64>(9)? != 0,
                 })
             }) {
                 Ok(rows) => out.extend(rows.flatten()),
@@ -1097,7 +1146,7 @@ impl Db {
 
         let mut keep = Vec::with_capacity(disk.len());
         for (name, path, size, mtime) in &disk {
-            let (ct, filename, _) = meta_of(cfg, path);
+            let (ct, filename, _once, permanent) = meta_of(cfg, path);
             self.upsert_file(
                 name,
                 &path.to_string_lossy(),
@@ -1107,6 +1156,7 @@ impl Db {
                 *mtime,
                 *mtime,
             );
+            self.set_file_permanent(name, permanent);
             keep.push(name.clone());
         }
         self.prune_files(&keep);
@@ -1547,7 +1597,10 @@ fn render_page(
             meta_parts.push(fmt_size(body_bytes.len() as u64));
         }
         meta_parts.push(format!("保存于 {}", fmt_time(mtime)));
-        if cfg.ttl > 0 {
+        let is_permanent = rec.map(|r| r.permanent).unwrap_or(false);
+        if is_permanent {
+            meta_parts.push("永久保留".to_string());
+        } else if cfg.ttl > 0 {
             meta_parts.push(format!(
                 "剩余 {}",
                 human_delta((mtime + cfg.ttl - now()).max(0))
@@ -1556,8 +1609,11 @@ fn render_page(
     }
     let meta = meta_parts.join(" · ");
     let is_once = rec.map(|r| r.once).unwrap_or(false);
+    let is_permanent = rec.map(|r| r.permanent).unwrap_or(false);
     let chip = if is_once {
         "阅后即焚 · 读取后清空".to_string()
+    } else if is_permanent {
+        "永久保留".to_string()
     } else if cfg.ttl > 0 {
         format!("保留 {}", human_ttl(cfg.ttl))
     } else {
@@ -2342,7 +2398,7 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
                     format!("/{}{}", f.name, to)
                 };
                 s.push_str(&format!(
-                    "{{\"name\":{},\"content_type\":{},\"filename\":{},\"size\":{},\"created_at\":{},\"updated_at\":{},\"last_access\":{},\"downloads\":{},\"readonly\":{},\"url\":{}}}",
+                    "{{\"name\":{},\"content_type\":{},\"filename\":{},\"size\":{},\"created_at\":{},\"updated_at\":{},\"last_access\":{},\"downloads\":{},\"readonly\":{},\"permanent\":{},\"url\":{}}}",
                     json_escape(&f.name),
                     json_escape(&f.content_type),
                     f.filename.as_deref().map(json_escape).unwrap_or_else(|| "null".into()),
@@ -2352,6 +2408,7 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
                     f.last_access.map(|v| v.to_string()).unwrap_or_else(|| "null".into()),
                     f.downloads,
                     f.readonly,
+                    f.permanent,
                     json_escape(&url)
                 ));
             }
@@ -2461,6 +2518,10 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
 
     if rest == "api/files/readonly" && *method == Method::Post {
         return admin_set_file_readonly(state, req);
+    }
+
+    if rest == "api/files/permanent" && *method == Method::Post {
+        return admin_set_file_permanent(state, req);
     }
 
     if rest == "api/shares/readonly" && *method == Method::Post {
@@ -2704,6 +2765,35 @@ fn admin_set_announcement(state: &AppState, mut req: Request) {
         return json_response(state, req, 500, json_error("保存失败"));
     }
     json_response(state, req, 200, b"{\"ok\":true}".to_vec());
+}
+
+fn admin_set_file_permanent(state: &AppState, mut req: Request) {
+    let body = read_body_limited(&mut req, 4096).unwrap_or_default();
+    let text = String::from_utf8_lossy(&body).into_owned();
+    let name = json_get(&text, "name").unwrap_or_default();
+    let valid = name.is_empty() || name_of(&state.cfg, &format!("/{}", name), false).is_some();
+    if !valid {
+        return json_response(state, req, 400, json_error("非法名称"));
+    }
+    let on = json_get(&text, "permanent")
+        .and_then(|v| parse_switch(&v))
+        .unwrap_or(false);
+    let path = target(&state.cfg, &name);
+    if fs::metadata(&path).is_err() {
+        return json_response(state, req, 404, json_error("文件不存在"));
+    }
+    if let Err(e) = set_meta_permanent(&state.cfg, &name, on) {
+        eprintln!("写入长期标记失败: {e}");
+        return json_response(state, req, 500, json_error("保存失败"));
+    }
+    // 数据库标记尽力更新；下次同步会根据 meta 补齐。
+    state.db.set_file_permanent(&name, on);
+    json_response(
+        state,
+        req,
+        200,
+        format!("{{\"ok\":true,\"permanent\":{}}}", on).into_bytes(),
+    )
 }
 
 fn admin_create_share(state: &AppState, mut req: Request) {

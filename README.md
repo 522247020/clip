@@ -8,6 +8,7 @@ Rust 单二进制实现（`tiny_http` + `rusqlite`），自带后台、SQLite �
 - **数据库**：SQLite 记录文件元信息、长期链接、访问日志、后台口令。
 - **长期下载**：为文件生成 `/d/<token>` 快照链接，可设有效期与次数上限。
 - **阅后即焚**：可让内容被读取一次后自动清空（`?once=1` 或 `CLIP_ONCE=1`）。
+- **长期文件**：可对单个文件标记「长期」，标记后不受 TTL 清理（时长视为 0）。
 - **只读模式**：可对单个文件设置只读；被锁定的内容拒绝保存/上传/删除，其它文件不受影响。
 - **公告**：后台可编辑一段公告，访客打开首页时展示。
 - **主题**：右上角一键切换亮色 / 暗色，记忆在浏览器本地。
@@ -102,7 +103,11 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 
 ### 文件
 
-列出所有内容（名称、类型、大小、更新时间、下载次数），可打开或删除。
+列出所有内容（名称、类型、大小、更新时间、下载次数），可打开、删除、设为只读。
+
+每一行还有「设为长期 / 长期（取消）」：标记后该文件**不受 `CLIP_TTL` 清理**，
+时长视为 `0`，页面会显示「永久保留」；再次点击可取消。这个标记保存在文件元数据
+（`permanent`）和数据库中，重启、覆盖内容都不会丢失。
 
 ### 长期下载
 
@@ -179,6 +184,7 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | `DELETE` | `/admin/api/logs` | 清空访问记录 |
 | `POST` | `/admin/api/password` | 修改后台口令（JSON：`current`、`new`） |
 | `POST` | `/admin/api/files/readonly` | 单个文件只读（JSON：`name`、`readonly` = `1`/`0`） |
+| `POST` | `/admin/api/files/permanent` | 单个文件长期/永久（JSON：`name`、`permanent` = `1`/`0`） |
 | `POST` | `/admin/api/shares/readonly` | 锁定/解锁长期链接（JSON：`token`、`readonly` = `1`/`0`） |
 | `POST` | `/admin/api/announcement` | 设置公告（JSON：`text`，空字符串即清空） |
 
@@ -193,7 +199,7 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | --- | --- |
 | `CLIP_FILE` | 根路径内容（纯文本文件，可直接 `cat` / 手工编辑） |
 | `CLIP_STORE/<name>` | 具名内容 |
-| `CLIP_STORE/.meta/<name>.json` | 元数据：`Content-Type`、原始文件名、`once`（阅后即焚） |
+| `CLIP_STORE/.meta/<name>.json` | 元数据：`Content-Type`、原始文件名、`once`（阅后即焚）、`permanent`（长期） |
 | `CLIP_DB` | SQLite：`files` / `shares` / `access_log` / `settings` 四张表 |
 | `CLIP_SHARE_DIR/<token>` | 长期下载快照 |
 

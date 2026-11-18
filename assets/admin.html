@@ -41,7 +41,7 @@
 
 <section>
   <p class="section-label">文件</p>
-  <div class="panel"><table id="files"><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>更新时间</th><th>下载</th><th>只读</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+  <div class="panel"><table id="files"><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>更新时间</th><th>下载</th><th>只读</th><th>长期</th><th>操作</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <section>
@@ -147,7 +147,7 @@ async function loadFiles(){
   const tb=document.querySelector('#files tbody');
   const sel=document.getElementById('shareName');
   tb.innerHTML='';sel.innerHTML='<option value="">／（根内容）</option>';
-  if(!files.length){tb.innerHTML='<tr><td colspan="7" class="muted">暂无文件</td></tr>';return;}
+  if(!files.length){tb.innerHTML='<tr><td colspan="8" class="muted">暂无文件</td></tr>';return;}
   for(const f of files){
     const tr=document.createElement('tr');
     tr.innerHTML=`<td class="mono">${esc(label(f.name))}</td>
@@ -156,10 +156,18 @@ async function loadFiles(){
       <td class="mono muted">${time(f.updated_at)}</td>
       <td class="mono">${f.downloads}</td>
       <td>${f.readonly?'<span class="pill bad">只读</span>':'<span class="pill ok">可写</span>'}</td>
+      <td><button class="mini" data-perm="${esc(f.name)}" data-permval="${f.permanent?0:1}">${f.permanent?'长期（取消）':'设为长期'}</button></td>
       <td><div class="actions"><a class="btn mini" href="${esc(f.url)}" target="_blank" rel="noreferrer">打开</a><button class="mini" data-ro="${esc(f.name)}" data-roval="${f.readonly?0:1}">${f.readonly?'解锁':'设为只读'}</button><button class="mini danger" data-del="${esc(f.name)}"${f.readonly?' disabled':''}>删除</button></div></td>`;
     tb.appendChild(tr);
     const o=document.createElement('option');o.value=f.name;o.textContent=label(f.name)+'  '+fmt(f.size);sel.appendChild(o);
   }
+  tb.querySelectorAll('button[data-perm]').forEach(b=>b.onclick=async()=>{
+    const on=b.dataset.permval==='1';
+    const r=await api(BASE+'/api/files/permanent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:b.dataset.perm,permanent:on?'1':'0'})});
+    const j=await r.json();
+    if(!r.ok){setMsg(j.error||'修改失败','err');return;}
+    setMsg(on?'已设为长期（不过期）':'已取消长期','ok');loadFiles();
+  });
   tb.querySelectorAll('button[data-ro]').forEach(b=>b.onclick=async()=>{
     const on=b.dataset.roval==='1';
     const r=await api(BASE+'/api/files/readonly',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:b.dataset.ro,readonly:on?'1':'0'})});
