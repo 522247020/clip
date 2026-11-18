@@ -48,11 +48,11 @@ __READONLY_BANNER__
 <footer>
   <p class="section-label">命令</p>
   <div class="cmd">
-    <div class="line"><span class="p">$</span><span class="t">curl -sL <span class="u">__B__</span></span><span class="c"># 取回</span></div>
-    <div class="line"><span class="p">$</span><span class="t">curl -d "内容" <span class="u">__B__</span></span><span class="c"># 保存文本</span></div>
-    <div class="line"><span class="p">$</span><span class="t">curl -T ./file <span class="u">__B__</span></span><span class="c"># 上传文件</span></div>
-    <div class="line"><span class="p">$</span><span class="t">curl -OJ <span class="u">__D__</span></span><span class="c"># 下载</span></div>
-    <div class="line"><span class="p">$</span><span class="t">curl -X DELETE <span class="u">__B__</span></span><span class="c"># 清空</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -sL <span class="u">__B__</span></span><span class="c"># 取回</span><span class="copy" aria-hidden="true">⧉</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -d "内容" <span class="u">__B__</span></span><span class="c"># 保存文本</span><span class="copy" aria-hidden="true">⧉</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -T ./file <span class="u">__B__</span></span><span class="c"># 上传文件</span><span class="copy" aria-hidden="true">⧉</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -OJ <span class="u">__D__</span></span><span class="c"># 下载</span><span class="copy" aria-hidden="true">⧉</span></div>
+    <div class="line"><span class="p">$</span><span class="t">curl -X DELETE <span class="u">__B__</span></span><span class="c"># 清空</span><span class="copy" aria-hidden="true">⧉</span></div>
   </div>
   <div class="foot-line">
     <span>存储 __FILE_NAME__ · 文本 __MAXS__ · 二进制 __MAXBS__ · __VER__</span>
@@ -76,6 +76,34 @@ const endpoint=__PATH_JSON__;
 const MAXT=__MAXN__,MAXB=__MAXBN__;
 const READONLY=__READONLY_JSON__;
 function setMsg(t,c){msg.textContent=t;msg.className=c||'';}
+function copyText(text){
+  if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(text);
+  return new Promise((resolve,reject)=>{
+    const el=document.createElement('textarea');
+    el.value=text;el.style.position='fixed';el.style.top='-1000px';el.style.opacity='0';
+    document.body.appendChild(el);el.focus();el.select();
+    try{document.execCommand('copy')?resolve():reject(new Error('copy failed'));}
+    catch(e){reject(e);}
+    finally{document.body.removeChild(el);}
+  });
+}
+document.querySelectorAll('.cmd .line').forEach(line=>{
+  line.tabIndex=0;line.setAttribute('role','button');line.title='点击复制命令';
+  const doCopy=async()=>{
+    const t=line.querySelector('.t');
+    const text=(t?t.textContent:line.textContent).trim();
+    const icon=line.querySelector('.copy');
+    try{
+      await copyText(text);
+      setMsg('命令已复制','ok');
+      if(icon)icon.textContent='✓';
+      line.classList.add('copied');
+      setTimeout(()=>{line.classList.remove('copied');if(icon)icon.textContent='⧉';},1200);
+    }catch(e){setMsg('复制失败：'+e,'err');}
+  };
+  line.addEventListener('click',doCopy);
+  line.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();doCopy();}});
+});
 function q(){return T?'?token='+encodeURIComponent(T):'';}
 function hdr(x){const h=Object.assign({},x||{});if(T)h['X-Clip-Token']=T;return h;}
 const onceEl=document.getElementById('once');
