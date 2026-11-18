@@ -86,7 +86,7 @@ const cp=document.getElementById('cp');
 if(cp)cp.onclick=()=>{const t=ta.value;const done=()=>{cp.textContent='已复制';setTimeout(()=>cp.textContent='复制全文',1200);};if(navigator.clipboard)navigator.clipboard.writeText(t).then(done);else done();};
 const saveBtn=document.getElementById('save');
 if(saveBtn)saveBtn.onclick=async()=>{
-  if(READONLY){setMsg('只读模式，禁止修改','err');return;}
+  if(READONLY){setMsg('该内容为只读，禁止修改','err');return;}
   if(!ta.value){setMsg('内容为空','err');return;}
   if(new Blob([ta.value]).size>MAXT){setMsg('内容超过 '+fmt(MAXT)+' 上限','err');return;}
   setMsg('保存中…');
@@ -99,11 +99,11 @@ if(saveBtn)saveBtn.onclick=async()=>{
   }catch(e){setMsg('保存失败：'+e,'err');}
 };
 const clr=document.getElementById('clr');
-if(clr)clr.onclick=async()=>{if(READONLY){setMsg('只读模式，禁止修改','err');return;}if(!confirm('清空内容？'))return;await fetch(endpoint+q(),{method:'DELETE',headers:hdr()});if(ta){ta.value='';setMsg('已清空','ok');}else{location.reload();}};
+if(clr)clr.onclick=async()=>{if(READONLY){setMsg('该内容为只读，禁止修改','err');return;}if(!confirm('清空内容？'))return;await fetch(endpoint+q(),{method:'DELETE',headers:hdr()});if(ta){ta.value='';setMsg('已清空','ok');}else{location.reload();}};
 const fileInput=document.getElementById('file');
 const onceLink=document.getElementById('onceLink');
 async function upload(f){
-  if(READONLY){setMsg('只读模式，禁止修改','err');return;}
+  if(READONLY){setMsg('该内容为只读，禁止修改','err');return;}
   if(f.size>MAXB){setMsg('文件超过 '+fmt(MAXB)+' 上限','err');return;}
   const once=!!(onceEl&&onceEl.checked);
   setMsg('上传中…');
@@ -139,7 +139,7 @@ document.addEventListener('dragover',e=>{e.preventDefault();});
 document.addEventListener('drop',e=>{
   if(!e.dataTransfer||!e.dataTransfer.files.length)return;
   e.preventDefault();
-  if(READONLY){setMsg('只读模式，禁止修改','err');return;}
+  if(READONLY){setMsg('该内容为只读，禁止修改','err');return;}
   const f=e.dataTransfer.files[0];
   if(ta&&isTextFile(f)&&f.size<=MAXT){f.text().then(t=>{ta.value=t;setMsg('已读入 '+f.name+'，点保存上传','ok');});}
   else upload(f);

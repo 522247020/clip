@@ -40,16 +40,8 @@
 </section>
 
 <section>
-  <p class="section-label">只读模式</p>
-  <div class="panel pad">
-    <label class="check"><input id="readonlyToggle" type="checkbox" __READONLY_CHECKED__> 开启后，前台页面和内容接口不再接受修改</label>
-    <p class="hint" id="readonlyHint" style="margin:6px 0 0">开启后仍可登录后台、修改口令、查看日志和关闭只读。</p>
-  </div>
-</section>
-
-<section>
   <p class="section-label">文件</p>
-  <div class="panel"><table id="files"><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>更新时间</th><th>下载</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+  <div class="panel"><table id="files"><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>更新时间</th><th>下载</th><th>只读</th><th>操作</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <section>
@@ -116,7 +108,6 @@
 </script>
 <script>
 const BASE=__BASE_JSON__;
-const READONLY=__READONLY_JSON__;
 const msg=document.getElementById('msg');
 const toast=document.getElementById('toast');
 let toastTimer=null;
@@ -156,7 +147,7 @@ async function loadFiles(){
   const tb=document.querySelector('#files tbody');
   const sel=document.getElementById('shareName');
   tb.innerHTML='';sel.innerHTML='<option value="">／（根内容）</option>';
-  if(!files.length){tb.innerHTML='<tr><td colspan="6" class="muted">暂无文件</td></tr>';return;}
+  if(!files.length){tb.innerHTML='<tr><td colspan="7" class="muted">暂无文件</td></tr>';return;}
   for(const f of files){
     const tr=document.createElement('tr');
     tr.innerHTML=`<td class="mono">${esc(label(f.name))}</td>
@@ -164,12 +155,19 @@ async function loadFiles(){
       <td class="mono">${fmt(f.size)}</td>
       <td class="mono muted">${time(f.updated_at)}</td>
       <td class="mono">${f.downloads}</td>
-      <td><div class="actions"><a class="btn mini" href="${esc(f.url)}" target="_blank" rel="noreferrer">打开</a><button class="mini danger" data-del="${esc(f.name)}"${READONLY?' disabled':''}>删除</button></div></td>`;
+      <td>${f.readonly?'<span class="pill bad">只读</span>':'<span class="pill ok">可写</span>'}</td>
+      <td><div class="actions"><a class="btn mini" href="${esc(f.url)}" target="_blank" rel="noreferrer">打开</a><button class="mini" data-ro="${esc(f.name)}" data-roval="${f.readonly?0:1}">${f.readonly?'解锁':'设为只读'}</button><button class="mini danger" data-del="${esc(f.name)}"${f.readonly?' disabled':''}>删除</button></div></td>`;
     tb.appendChild(tr);
     const o=document.createElement('option');o.value=f.name;o.textContent=label(f.name)+'  '+fmt(f.size);sel.appendChild(o);
   }
+  tb.querySelectorAll('button[data-ro]').forEach(b=>b.onclick=async()=>{
+    const on=b.dataset.roval==='1';
+    const r=await api(BASE+'/api/files/readonly',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:b.dataset.ro,readonly:on?'1':'0'})});
+    const j=await r.json();
+    if(!r.ok){setMsg(j.error||'修改失败','err');return;}
+    setMsg(on?'已设为只读':'已解除只读','ok');loadFiles();
+  });
   tb.querySelectorAll('button[data-del]').forEach(b=>b.onclick=async()=>{
-    if(READONLY){setMsg('只读模式，禁止修改','err');return;}
     if(!await ask('删除文件「'+label(b.dataset.del)+'」？','删除'))return;
     await api(BASE+'/api/files?name='+encodeURIComponent(b.dataset.del),{method:'DELETE'});
     setMsg('已删除','ok');loadFiles();loadShares();
@@ -190,12 +188,18 @@ async function loadShares(){
       <td class="mono">${s.expires_at?time(s.expires_at):'永久'}</td>
       <td class="mono">${s.downloads}${s.max_downloads?' / '+s.max_downloads:''}</td>
       <td>${expired||over?'<span class="pill bad">失效</span>':'<span class="pill ok">有效</span>'}</td>
-      <td><div class="actions"><button class="mini" data-copy="${esc(url)}">复制</button><button class="mini danger" data-rm="${esc(s.token)}"${READONLY?' disabled':''}>删除</button></div></td>`;
+      <td><div class="actions"><button class="mini" data-copy="${esc(url)}">复制</button><button class="mini" data-lock="${esc(s.token)}" data-lockval="${s.readonly?0:1}">${s.readonly?'解锁':'锁定'}</button><button class="mini danger" data-rm="${esc(s.token)}"${s.readonly?' disabled':''}>删除</button></div></td>`;
     tb.appendChild(tr);
   }
   tb.querySelectorAll('button[data-copy]').forEach(b=>b.onclick=()=>{navigator.clipboard.writeText(b.dataset.copy);setMsg('链接已复制','ok');});
+  tb.querySelectorAll('button[data-lock]').forEach(b=>b.onclick=async()=>{
+    const on=b.dataset.lockval==='1';
+    const r=await api(BASE+'/api/shares/readonly',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:b.dataset.lock,readonly:on?'1':'0'})});
+    const j=await r.json();
+    if(!r.ok){setMsg(j.error||'修改失败','err');return;}
+    setMsg(on?'链接已锁定':'链接已解锁','ok');loadShares();
+  });
   tb.querySelectorAll('button[data-rm]').forEach(b=>b.onclick=async()=>{
-    if(READONLY){setMsg('只读模式，禁止修改','err');return;}
     if(!await ask('删除该长期链接？','删除'))return;
     await api(BASE+'/api/shares?token='+encodeURIComponent(b.dataset.rm),{method:'DELETE'});
     setMsg('已删除','ok');loadShares();
@@ -204,7 +208,6 @@ async function loadShares(){
 
 document.getElementById('shareForm').onsubmit=async e=>{
   e.preventDefault();
-  if(READONLY){setMsg('只读模式，禁止修改','err');return;}
   const body=JSON.stringify({
     name:document.getElementById('shareName').value,
     expires_in:document.getElementById('shareExp').value,
@@ -260,21 +263,6 @@ document.getElementById('pwdForm').onsubmit=async e=>{
 };
 
 loadFiles();loadShares();loadLogs();
-
-// 只读模式开关
-const roToggle=document.getElementById('readonlyToggle');
-const shareForm=document.getElementById('shareForm');
-if(READONLY&&shareForm){
-  shareForm.querySelectorAll('input,select,button').forEach(el=>{el.disabled=true;});
-}
-if(roToggle)roToggle.onchange=async()=>{
-  const on=roToggle.checked;
-  const r=await api(BASE+'/api/readonly',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({readonly:on?'1':'0'})});
-  const j=await r.json();
-  if(!r.ok){setMsg(j.error||'修改失败','err');roToggle.checked=!on;return;}
-  setMsg(on?'已开启只读模式':'已关闭只读模式','ok');
-  setTimeout(()=>location.reload(),300);
-};
 
 // 公告
 const annText=document.getElementById('announcementText');
