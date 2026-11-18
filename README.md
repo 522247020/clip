@@ -79,6 +79,10 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 > 根内容请用 `curl -OJ "https://HOST/?download=1"`（`-J` 才会根据响应头取名字）。
 > 具名路径（如 `/photo.png`）直接 `curl -O https://HOST/photo.png` 即可。
 
+> **文件不存在时返回 `404`**。用 `curl -fsSLO` 可以让 curl 在 404 时直接报错，
+> 而不是静默存一个空文件。文件消失通常是超过 `CLIP_TTL`（默认 1 天）被清理，
+> 重新上传后在后台点「设为长期」，或把 `CLIP_TTL` 设为 `0`。
+
 > `curl` 和浏览器访问同一地址，靠 `Accept` 头自动区分返回纯文本还是网页。
 
 ---

@@ -1798,6 +1798,17 @@ fn do_get(state: &AppState, req: Request, path: String, query: String) {
     let raw = path == "/raw" || !wants_html(&req) || download;
 
     if raw {
+        // 具名内容不存在时返回 404，不能回 200 空体（会让 curl -O 静默存一个空文件）。
+        if rec.is_none() && !name.is_empty() {
+            return respond(
+                state,
+                req,
+                404,
+                b"not found\n".to_vec(),
+                "text/plain; charset=utf-8",
+                vec![],
+            );
+        }
         let (body, ct) = match &rec {
             Some(r) => (r.body.clone(), r.content_type.clone()),
             None => (Vec::new(), "text/plain; charset=utf-8".to_string()),
