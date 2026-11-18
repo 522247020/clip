@@ -28,6 +28,18 @@
 </header>
 
 <section>
+  <p class="section-label">公告</p>
+  <div class="panel pad">
+    <p class="hint" style="margin-top:0">留空则不显示；支持多行，前台会原样展示。</p>
+    <textarea id="announcementText" class="announce-input" placeholder="例如：今晚 22:00 维护，暂停使用。">__ANNOUNCEMENT__</textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="saveAnnouncement" type="button">保存公告</button>
+      <button class="danger" id="clearAnnouncement" type="button">清空公告</button>
+    </div>
+  </div>
+</section>
+
+<section>
   <p class="section-label">只读模式</p>
   <div class="panel pad">
     <label class="check"><input id="readonlyToggle" type="checkbox" __READONLY_CHECKED__> 开启后，前台页面和内容接口不再接受修改</label>
@@ -262,6 +274,23 @@ if(roToggle)roToggle.onchange=async()=>{
   if(!r.ok){setMsg(j.error||'修改失败','err');roToggle.checked=!on;return;}
   setMsg(on?'已开启只读模式':'已关闭只读模式','ok');
   setTimeout(()=>location.reload(),300);
+};
+
+// 公告
+const annText=document.getElementById('announcementText');
+async function saveAnnouncement(v){
+  const r=await api(BASE+'/api/announcement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:v})});
+  const j=await r.json();
+  if(!r.ok){setMsg(j.error||'保存失败','err');return;}
+  if(annText)annText.value=v;
+  setMsg(v.trim()?'公告已保存':'公告已清空','ok');
+}
+const saveAnnBtn=document.getElementById('saveAnnouncement');
+if(saveAnnBtn)saveAnnBtn.onclick=()=>saveAnnouncement(annText.value);
+const clearAnnBtn=document.getElementById('clearAnnouncement');
+if(clearAnnBtn)clearAnnBtn.onclick=async()=>{
+  if(!await ask('清空公告？','清空'))return;
+  await saveAnnouncement('');
 };
 </script>
 </body></html>

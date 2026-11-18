@@ -20,7 +20,6 @@
 //!     CLIP_MAX_BYTES      文本大小上限，默认 2MB
 //!     CLIP_MAX_BINARY     二进制大小上限，默认 10MB
 //!     CLIP_ONCE           默认阅后即焚（读取一次后清空），默认 0
-//!     CLIP_READONLY       默认只读（前台和内容接口拒绝修改），默认 0
 //!     CLIP_TOKEN          可选访问令牌，留空则公开
 //!     CLIP_ADMIN_PATH     后台路径，默认 /admin
 //!     CLIP_ADMIN_PASSWORD 后台登录口令，默认取 CLIP_ADMIN_TOKEN
@@ -77,7 +76,6 @@ struct Config {
     admin_password: String,
     admin_path: String,
     once_default: bool,
-    readonly_default: bool,
     db_path: PathBuf,
     share_dir: PathBuf,
 }
@@ -141,10 +139,6 @@ impl Config {
             admin_password,
             admin_path,
             once_default: env::var("CLIP_ONCE")
-                .ok()
-                .and_then(|v| parse_switch(&v))
-                .unwrap_or(false),
-            readonly_default: env::var("CLIP_READONLY")
                 .ok()
                 .and_then(|v| parse_switch(&v))
                 .unwrap_or(false),
@@ -1307,6 +1301,7 @@ fn render_page(
     name: &str,
     rec: Option<&Record>,
     readonly: bool,
+    announcement: &str,
 ) -> String {
     let empty: Vec<u8> = Vec::new();
     let body_bytes: &[u8] = rec.map(|r| r.body.as_slice()).unwrap_or(&empty);
@@ -1340,6 +1335,14 @@ fn render_page(
         r#"<div class="notice">只读模式：内容已锁定，暂不接受保存、上传或删除。</div>"#
     } else {
         ""
+    };
+    let announcement_html = if announcement.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<div class="announce">{}</div>"#,
+            html_escape(announcement)
+        )
     };
 
     let body_html = if is_image {
@@ -1448,6 +1451,7 @@ fn render_page(
         .replace("__CHIP__", &html_escape(&chip))
         .replace("__ONCE_CHECKED__", once_checked)
         .replace("__READONLY_BANNER__", readonly_banner)
+        .replace("__ANNOUNCEMENT__", &announcement_html)
         .replace("__READONLY_HIDDEN__", readonly_hidden)
         .replace("__READONLY_JSON__", if readonly { "true" } else { "false" })
         .replace("__META__", &html_escape(&meta))
@@ -1589,13 +1593,16 @@ const SESSION_TTL: i64 = 7 * 24 * 3600;
 const LOGIN_MAX_FAILS: u32 = 5;
 const LOGIN_LOCK_SECS: i64 = 300;
 const READONLY_KEY: &str = "readonly";
+const ANNOUNCEMENT_KEY: &str = "announcement";
+const ANNOUNCEMENT_MAX_CHARS: usize = 2000;
 
-/// 只读模式：数据库设置优先，否则用 CLIP_READONLY 默认值。
+fn get_announcement(state: &AppState) -> String {
+    state.db.get_setting(ANNOUNCEMENT_KEY).unwrap_or_default()
+}
+
+/// 只读模式只能由后台开关，状态存于数据库。
 fn readonly_enabled(state: &AppState) -> bool {
-    match state.db.get_setting(READONLY_KEY) {
-        Some(v) => v == "1",
-        None => state.cfg.readonly_default,
-    }
+    state.db.get_setting(READONLY_KEY).as_deref() == Some("1")
 }
 
 /// 只读时拒绝修改请求。
@@ -1842,6 +1849,7 @@ fn do_get(state: &AppState, req: Request, path: String, query: String) {
         &name,
         rec.as_ref(),
         readonly_enabled(state),
+        &get_announcement(state),
     );
     consume_once(state, &name, &rec);
     respond(
@@ -2165,6 +2173,7 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
             "当前使用环境变量口令（CLIP_ADMIN_PASSWORD / CLIP_ADMIN_TOKEN / CLIP_TOKEN）。".to_string()
         };
         let readonly = readonly_enabled(state);
+        let announcement = get_announcement(state);
         let html = ADMIN_PAGE
             .replace("__CSS__", &format!("{}\n{}", CSS, ADMIN_CSS))
             .replace("__CHIP__", &html_escape(&chip))
@@ -2172,6 +2181,7 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
             .replace("__BASE_JSON__", &json_escape(&base))
             .replace("__LOGOUT__", &html_escape(&format!("{}/logout", base)))
             .replace("__PWDNOTE__", &html_escape(&pwd_note))
+            .replace("__ANNOUNCEMENT__", &html_escape(&announcement))
             .replace("__READONLY_CHECKED__", if readonly { "checked" } else { "" })
             .replace("__READONLY_JSON__", if readonly { "true" } else { "false" })
             .replace("__DB__", &html_escape(&state.cfg.db_path.to_string_lossy()))
@@ -2325,6 +2335,10 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
 
     if rest == "api/readonly" && *method == Method::Post {
         return admin_set_readonly(state, req);
+    }
+
+    if rest == "api/announcement" && *method == Method::Post {
+        return admin_set_announcement(state, req);
     }
 
     respond(
@@ -2520,6 +2534,23 @@ fn admin_set_readonly(state: &AppState, mut req: Request) {
         200,
         format!("{{\"ok\":true,\"readonly\":{}}}", on).into_bytes(),
     )
+}
+
+fn admin_set_announcement(state: &AppState, mut req: Request) {
+    let body = read_body_limited(&mut req, 16 * 1024).unwrap_or_default();
+    let text = String::from_utf8_lossy(&body).into_owned();
+    let announcement: String = json_get(&text, "text")
+        .unwrap_or_default()
+        .chars()
+        .take(ANNOUNCEMENT_MAX_CHARS)
+        .collect();
+    if !state
+        .db
+        .set_setting(ANNOUNCEMENT_KEY, &announcement)
+    {
+        return json_response(state, req, 500, json_error("保存失败"));
+    }
+    json_response(state, req, 200, b"{\"ok\":true}".to_vec());
 }
 
 fn admin_create_share(state: &AppState, mut req: Request) {
