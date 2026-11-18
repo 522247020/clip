@@ -26,6 +26,8 @@
   </div>
 </header>
 
+__READONLY_BANNER__
+
 <section class="editor">
   <div class="card-head">
     <span class="filename">__TITLE__</span>
@@ -34,9 +36,9 @@
   __BODY__
   <div class="card-foot">
     __ACTIONS__
-    <label class="btn" for="file">&#65291; 上传文件</label>
+    <label class="btn" for="file" __READONLY_HIDDEN__>&#65291; 上传文件</label>
     <input id="file" type="file" hidden>
-    <label class="check"><input id="once" type="checkbox" __ONCE_CHECKED__> 阅后即焚</label>
+    <label class="check" __READONLY_HIDDEN__><input id="once" type="checkbox" __ONCE_CHECKED__> 阅后即焚</label>
     <a id="onceLink" class="btn primary" href="#" hidden target="_blank" rel="noreferrer">打开（仅一次）</a>
     <span id="msg" role="status">__HINT__</span>
   </div>
@@ -71,6 +73,7 @@
 const msg=document.getElementById('msg'),T='__TOK__';
 const endpoint=__PATH_JSON__;
 const MAXT=__MAXN__,MAXB=__MAXBN__;
+const READONLY=__READONLY_JSON__;
 function setMsg(t,c){msg.textContent=t;msg.className=c||'';}
 function q(){return T?'?token='+encodeURIComponent(T):'';}
 function hdr(x){const h=Object.assign({},x||{});if(T)h['X-Clip-Token']=T;return h;}
@@ -82,6 +85,7 @@ const cp=document.getElementById('cp');
 if(cp)cp.onclick=()=>{const t=ta.value;const done=()=>{cp.textContent='已复制';setTimeout(()=>cp.textContent='复制全文',1200);};if(navigator.clipboard)navigator.clipboard.writeText(t).then(done);else done();};
 const saveBtn=document.getElementById('save');
 if(saveBtn)saveBtn.onclick=async()=>{
+  if(READONLY){setMsg('只读模式，禁止修改','err');return;}
   if(!ta.value){setMsg('内容为空','err');return;}
   if(new Blob([ta.value]).size>MAXT){setMsg('内容超过 '+fmt(MAXT)+' 上限','err');return;}
   setMsg('保存中…');
@@ -94,10 +98,11 @@ if(saveBtn)saveBtn.onclick=async()=>{
   }catch(e){setMsg('保存失败：'+e,'err');}
 };
 const clr=document.getElementById('clr');
-if(clr)clr.onclick=async()=>{if(!confirm('清空内容？'))return;await fetch(endpoint+q(),{method:'DELETE',headers:hdr()});if(ta){ta.value='';setMsg('已清空','ok');}else{location.reload();}};
+if(clr)clr.onclick=async()=>{if(READONLY){setMsg('只读模式，禁止修改','err');return;}if(!confirm('清空内容？'))return;await fetch(endpoint+q(),{method:'DELETE',headers:hdr()});if(ta){ta.value='';setMsg('已清空','ok');}else{location.reload();}};
 const fileInput=document.getElementById('file');
 const onceLink=document.getElementById('onceLink');
 async function upload(f){
+  if(READONLY){setMsg('只读模式，禁止修改','err');return;}
   if(f.size>MAXB){setMsg('文件超过 '+fmt(MAXB)+' 上限','err');return;}
   const once=!!(onceEl&&onceEl.checked);
   setMsg('上传中…');
@@ -133,6 +138,7 @@ document.addEventListener('dragover',e=>{e.preventDefault();});
 document.addEventListener('drop',e=>{
   if(!e.dataTransfer||!e.dataTransfer.files.length)return;
   e.preventDefault();
+  if(READONLY){setMsg('只读模式，禁止修改','err');return;}
   const f=e.dataTransfer.files[0];
   if(ta&&isTextFile(f)&&f.size<=MAXT){f.text().then(t=>{ta.value=t;setMsg('已读入 '+f.name+'，点保存上传','ok');});}
   else upload(f);

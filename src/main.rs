@@ -20,6 +20,7 @@
 //!     CLIP_MAX_BYTES      文本大小上限，默认 2MB
 //!     CLIP_MAX_BINARY     二进制大小上限，默认 10MB
 //!     CLIP_ONCE           默认阅后即焚（读取一次后清空），默认 0
+//!     CLIP_READONLY       默认只读（前台和内容接口拒绝修改），默认 0
 //!     CLIP_TOKEN          可选访问令牌，留空则公开
 //!     CLIP_ADMIN_PATH     后台路径，默认 /admin
 //!     CLIP_ADMIN_PASSWORD 后台登录口令，默认取 CLIP_ADMIN_TOKEN
@@ -76,6 +77,7 @@ struct Config {
     admin_password: String,
     admin_path: String,
     once_default: bool,
+    readonly_default: bool,
     db_path: PathBuf,
     share_dir: PathBuf,
 }
@@ -139,6 +141,10 @@ impl Config {
             admin_password,
             admin_path,
             once_default: env::var("CLIP_ONCE")
+                .ok()
+                .and_then(|v| parse_switch(&v))
+                .unwrap_or(false),
+            readonly_default: env::var("CLIP_READONLY")
                 .ok()
                 .and_then(|v| parse_switch(&v))
                 .unwrap_or(false),
@@ -1300,6 +1306,7 @@ fn render_page(
     path: &str,
     name: &str,
     rec: Option<&Record>,
+    readonly: bool,
 ) -> String {
     let empty: Vec<u8> = Vec::new();
     let body_bytes: &[u8] = rec.map(|r| r.body.as_slice()).unwrap_or(&empty);
@@ -1327,6 +1334,13 @@ fn render_page(
         raw_base,
         if tq.is_empty() { "?" } else { "&" }
     );
+    let readonly_attr = if readonly { " readonly" } else { "" };
+    let readonly_hidden = if readonly { "hidden" } else { "" };
+    let readonly_banner = if readonly {
+        r#"<div class="notice">只读模式：内容已锁定，暂不接受保存、上传或删除。</div>"#
+    } else {
+        ""
+    };
 
     let body_html = if is_image {
         format!(
@@ -1350,25 +1364,39 @@ fn render_page(
         )
     } else {
         format!(
-            r#"<textarea id="c" spellcheck="false" placeholder="空的。粘贴或拖入内容，点保存。">{}</textarea>"#,
+            r#"<textarea id="c" spellcheck="false" placeholder="空的。粘贴或拖入内容，点保存。"{}>{}</textarea>"#,
+            readonly_attr,
             html_escape(&String::from_utf8_lossy(body_bytes))
         )
     };
 
     let actions = if is_text {
-        r#"<button id="cp" type="button">复制全文</button>
+        let mut a = String::from(r#"<button id="cp" type="button">复制全文</button>"#);
+        if !readonly {
+            a.push_str(
+                r#"
   <button id="save" type="button" class="primary">保存</button>
-  <button class="danger" id="clr" type="button">清空</button>"#
-            .to_string()
-    } else {
-        format!(
-            r#"<a class="btn primary" href="{}" download>下载</a>
   <button class="danger" id="clr" type="button">清空</button>"#,
+            );
+        }
+        a
+    } else {
+        let mut a = format!(
+            r#"<a class="btn primary" href="{}" download>下载</a>"#,
             html_escape(&dl_url)
-        )
+        );
+        if !readonly {
+            a.push_str(
+                r#"
+  <button class="danger" id="clr" type="button">清空</button>"#,
+            );
+        }
+        a
     };
 
-    let hint = if is_text {
+    let hint = if readonly {
+        "只读模式"
+    } else if is_text {
         "Ctrl / ⌘ + Enter 保存"
     } else {
         "拖入文件或点「上传文件」可替换"
@@ -1419,6 +1447,9 @@ fn render_page(
         .replace("__HINT__", hint)
         .replace("__CHIP__", &html_escape(&chip))
         .replace("__ONCE_CHECKED__", once_checked)
+        .replace("__READONLY_BANNER__", readonly_banner)
+        .replace("__READONLY_HIDDEN__", readonly_hidden)
+        .replace("__READONLY_JSON__", if readonly { "true" } else { "false" })
         .replace("__META__", &html_escape(&meta))
         .replace(
             "__B__",
@@ -1557,6 +1588,32 @@ const SESSION_COOKIE: &str = "clip_sid";
 const SESSION_TTL: i64 = 7 * 24 * 3600;
 const LOGIN_MAX_FAILS: u32 = 5;
 const LOGIN_LOCK_SECS: i64 = 300;
+const READONLY_KEY: &str = "readonly";
+
+/// 只读模式：数据库设置优先，否则用 CLIP_READONLY 默认值。
+fn readonly_enabled(state: &AppState) -> bool {
+    match state.db.get_setting(READONLY_KEY) {
+        Some(v) => v == "1",
+        None => state.cfg.readonly_default,
+    }
+}
+
+/// 只读时拒绝修改请求。
+fn deny_readonly(state: &AppState, req: Request) {
+    let is_fetch = wants_html(&req) || header_value(&req, "X-Requested-With") == Some("fetch");
+    if is_fetch {
+        json_response(state, req, 403, json_error("只读模式，禁止修改"));
+    } else {
+        respond(
+            state,
+            req,
+            403,
+            b"readonly: modifications disabled\n".to_vec(),
+            "text/plain; charset=utf-8",
+            vec![],
+        );
+    }
+}
 
 /// 后台是否已配置口令（环境变量或数据库中已保存）。
 fn admin_enabled(state: &AppState) -> bool {
@@ -1778,7 +1835,14 @@ fn do_get(state: &AppState, req: Request, path: String, query: String) {
         state.db.touch_file(&name, false, now());
     }
     let origin = request_origin(&req);
-    let html = render_page(cfg, &origin, &path, &name, rec.as_ref());
+    let html = render_page(
+        cfg,
+        &origin,
+        &path,
+        &name,
+        rec.as_ref(),
+        readonly_enabled(state),
+    );
     consume_once(state, &name, &rec);
     respond(
         state,
@@ -1814,6 +1878,9 @@ fn do_write(state: &AppState, mut req: Request, path: String, query: String) {
             "text/plain; charset=utf-8",
             vec![],
         );
+    }
+    if readonly_enabled(state) {
+        return deny_readonly(state, req);
     }
 
     let declared = header_value_owned(&req, "Content-Type")
@@ -1952,6 +2019,9 @@ fn do_delete(state: &AppState, req: Request, path: String, query: String) {
             "text/plain; charset=utf-8",
             vec![],
         );
+    }
+    if readonly_enabled(state) {
+        return deny_readonly(state, req);
     }
     clear(cfg, &name);
     state.db.remove_file(&name);
@@ -2094,6 +2164,7 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
         } else {
             "当前使用环境变量口令（CLIP_ADMIN_PASSWORD / CLIP_ADMIN_TOKEN / CLIP_TOKEN）。".to_string()
         };
+        let readonly = readonly_enabled(state);
         let html = ADMIN_PAGE
             .replace("__CSS__", &format!("{}\n{}", CSS, ADMIN_CSS))
             .replace("__CHIP__", &html_escape(&chip))
@@ -2101,6 +2172,8 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
             .replace("__BASE_JSON__", &json_escape(&base))
             .replace("__LOGOUT__", &html_escape(&format!("{}/logout", base)))
             .replace("__PWDNOTE__", &html_escape(&pwd_note))
+            .replace("__READONLY_CHECKED__", if readonly { "checked" } else { "" })
+            .replace("__READONLY_JSON__", if readonly { "true" } else { "false" })
             .replace("__DB__", &html_escape(&state.cfg.db_path.to_string_lossy()))
             .replace(
                 "__SHAREDIR__",
@@ -2158,6 +2231,9 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
             if !valid {
                 return json_response(state, req, 400, json_error("非法名称"));
             }
+            if readonly_enabled(state) {
+                return json_response(state, req, 403, json_error("只读模式，禁止删除"));
+            }
             clear(&state.cfg, &name);
             state.db.remove_file(&name);
             return json_response(state, req, 200, b"{\"ok\":true}".to_vec());
@@ -2192,12 +2268,18 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
             return json_response(state, req, 200, s.into_bytes());
         }
         if *method == Method::Post {
+            if readonly_enabled(state) {
+                return json_response(state, req, 403, json_error("只读模式，禁止创建链接"));
+            }
             return admin_create_share(state, req);
         }
         if *method == Method::Delete {
             let token = query_get(&query, "token").unwrap_or_default();
             if token.is_empty() {
                 return json_response(state, req, 400, json_error("缺少 token"));
+            }
+            if readonly_enabled(state) {
+                return json_response(state, req, 403, json_error("只读模式，禁止删除链接"));
             }
             remove_share(state, &token);
             return json_response(state, req, 200, b"{\"ok\":true}".to_vec());
@@ -2239,6 +2321,10 @@ fn do_admin(state: &AppState, req: Request, method: &Method, path: String, query
 
     if rest == "api/password" && *method == Method::Post {
         return admin_change_password(state, req);
+    }
+
+    if rest == "api/readonly" && *method == Method::Post {
+        return admin_set_readonly(state, req);
     }
 
     respond(
@@ -2414,6 +2500,26 @@ fn admin_change_password(state: &AppState, mut req: Request) {
         .unwrap_or_else(|e| e.into_inner())
         .clear();
     json_response(state, req, 200, b"{\"ok\":true}".to_vec());
+}
+
+fn admin_set_readonly(state: &AppState, mut req: Request) {
+    let body = read_body_limited(&mut req, 4096).unwrap_or_default();
+    let text = String::from_utf8_lossy(&body).into_owned();
+    let on = json_get(&text, "readonly")
+        .and_then(|v| parse_switch(&v))
+        .unwrap_or(false);
+    if !state
+        .db
+        .set_setting(READONLY_KEY, if on { "1" } else { "0" })
+    {
+        return json_response(state, req, 500, json_error("保存失败"));
+    }
+    json_response(
+        state,
+        req,
+        200,
+        format!("{{\"ok\":true,\"readonly\":{}}}", on).into_bytes(),
+    )
 }
 
 fn admin_create_share(state: &AppState, mut req: Request) {

@@ -8,6 +8,7 @@ Rust 单二进制实现（`tiny_http` + `rusqlite`），自带后台、SQLite �
 - **数据库**：SQLite 记录文件元信息、长期链接、访问日志、后台口令。
 - **长期下载**：为文件生成 `/d/<token>` 快照链接，可设有效期与次数上限。
 - **阅后即焚**：可让内容被读取一次后自动清空（`?once=1` 或 `CLIP_ONCE=1`）。
+- **只读模式**：后台一键锁定，前台页面和内容接口拒绝保存/上传/删除。
 - **主题**：右上角一键切换亮色 / 暗色，记忆在浏览器本地。
 - **单文件**：HTML/CSS/JS 与数据库都用 `include_str!` 编进一个可执行文件。
 
@@ -111,6 +112,16 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 记录时间、IP、方法、路径、状态、大小与 User-Agent，可刷新 / 清空。
 所有确认操作（删除、清空）使用全屏遮罩对话框。
 
+### 只读模式
+
+后台勾选「只读模式」后：
+
+- 前台页面显示锁定提示，隐藏保存 / 上传 / 清空控件，文本框变为只读。
+- 内容写接口（`POST` / `PUT` / `DELETE`）和后台的文件删除、链接创建/删除均返回 `403`。
+- 仍可正常读取、下载、登录后台、修改口令、查看日志，并随时关闭只读。
+
+也可用 `CLIP_READONLY=1` 设置默认只读；后台的开关会持久化到 SQLite 并覆盖默认值。
+
 ---
 
 ## 环境变量
@@ -125,6 +136,7 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | `CLIP_MAX_BYTES` | `2097152` | 文本上限（2MB） |
 | `CLIP_MAX_BINARY` | `10485760` | 二进制上限（10MB） |
 | `CLIP_ONCE` | `0` | 默认阅后即焚；`1` 时新内容读取一次后清空 |
+| `CLIP_READONLY` | `0` | 默认只读；`1` 时前台和内容接口拒绝修改（后台可随时切换） |
 | `CLIP_TOKEN` | 空 | 内容访问令牌，留空则公开；需 `X-Clip-Token` 头或 `?token=` |
 | `CLIP_ADMIN_PATH` | `/admin` | 后台路径 |
 | `CLIP_ADMIN_PASSWORD` | 取 `CLIP_ADMIN_TOKEN` | 后台登录口令 |
@@ -158,6 +170,7 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | `GET` | `/admin/api/logs?limit=` | 访问记录 |
 | `DELETE` | `/admin/api/logs` | 清空访问记录 |
 | `POST` | `/admin/api/password` | 修改后台口令（JSON：`current`、`new`） |
+| `POST` | `/admin/api/readonly` | 切换只读模式（JSON：`readonly` = `1`/`0`） |
 
 - 保存接口支持 `Content-Type: application/json`，取其中的 `content` 字段。
 - 上传时可用 `X-Clip-Filename` 头（percent 编码，避免非 ASCII 原始头）指定原始文件名。
