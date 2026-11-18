@@ -1361,7 +1361,8 @@ fn render_page(
         },
         tq
     );
-    let display_raw = format!("{}{}{}", origin, raw_base, tq);
+    let sep = if tq.is_empty() { "?" } else { "&" };
+    let display_raw = format!("{}{}{}{}download=1", origin, raw_base, tq, sep);
     let readonly_attr = if readonly { " readonly" } else { "" };
     let readonly_hidden = if readonly { "hidden" } else { "" };
     let readonly_banner = if readonly {
@@ -1722,7 +1723,7 @@ fn wants_html(req: &Request) -> bool {
 
 /// 解析路径：返回内容名；根路径与 /raw 返回空字符串，非法路径返回 None。
 fn name_of(cfg: &Config, path: &str, allow_raw: bool) -> Option<String> {
-    if path == "/" {
+    if path.is_empty() || path == "/" {
         return Some(String::new());
     }
     if allow_raw && path == "/raw" {
@@ -1806,7 +1807,12 @@ fn do_get(state: &AppState, req: Request, path: String, query: String) {
             .as_ref()
             .map(|r| !looks_like_text(&r.body))
             .unwrap_or(false);
-        if download || binary {
+        // 不是在页面内联预览图片时，都带上附件名，保证 curl -OJ 能拿到正确文件名。
+        let wants_image = header_value(&req, "Accept")
+            .map(|a| a.to_ascii_lowercase().contains("image/"))
+            .unwrap_or(false);
+        let inline_preview = wants_image && is_image_ct(&ct) && !download;
+        if !inline_preview && rec.is_some() {
             let fname = download_name(rec.as_ref().and_then(|r| r.filename.as_deref()), &name, &ct);
             extra.push(disposition_header(&fname));
         }

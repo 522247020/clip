@@ -54,7 +54,9 @@ curl -T ./photo.png https://HOST/photo.png
 curl -sL https://HOST/photo.png
 
 # 下载 / 清空
-curl -OJ "https://HOST/?download=1"
+curl -OJ "https://HOST/?download=1"          # 根内容：-OJ 按 Content-Disposition 命名
+curl -O  https://HOST/photo.png              # 具名文件：-O 直接用 URL 文件名
+curl -o  saved.bin "https://HOST/?download=1"  # 也可以自己指定名字
 curl -X DELETE https://HOST/
 
 # 阅后即焚：读取一次后自动清空
@@ -71,6 +73,11 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 - **阅后即焚**：勾选编辑器下方的「阅后即焚」再保存 / 上传；上传后**不会自动打开**，点「打开（仅一次）」查看，读取一次后自动清空。
 - **命令复制**：页面底部的命令行点击即可复制；也支持 Tab 聚焦后 Enter / 空格复制。
 - **主题**：右上角 `☀ / ☾` 切换亮色 / 暗色。
+
+> **关于 `curl -O`**：`-O` 只会用 URL 最后一段作为文件名，不会读 `Content-Disposition`。
+> 根路径 `/` 没有文件名，所以 `curl -O https://HOST/` 会存成 `curl_response`；
+> 根内容请用 `curl -OJ "https://HOST/?download=1"`（`-J` 才会根据响应头取名字）。
+> 具名路径（如 `/photo.png`）直接 `curl -O https://HOST/photo.png` 即可。
 
 > `curl` 和浏览器访问同一地址，靠 `Accept` 头自动区分返回纯文本还是网页。
 
