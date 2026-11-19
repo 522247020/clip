@@ -130,6 +130,10 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 记录时间、IP、方法、路径、状态、大小与 User-Agent，可刷新 / 清空。
 所有确认操作（删除、清空）使用全屏遮罩对话框。
 
+**真实客户端 IP**：直连地址是回环（Nginx 本地反代）或列在 `CLIP_TRUSTED_PROXIES` 里时，
+会优先用 `X-Forwarded-For` 的第一个地址，其次 `X-Real-IP`。登录失败节流也按真实 IP 计算。
+可用 `CLIP_TRUST_PROXY=0` 关闭这一行为。
+
 ### 公告
 
 后台「公告」文本框可填写一段文字（支持多行，最多 2000 字），保存后访客打开前台首页会在顶部看到；
@@ -160,6 +164,8 @@ curl -T ./file -H 'X-Clip-Once: 1' https://HOST/file
 | `CLIP_MAX_BYTES` | `2097152` | 文本上限（2MB） |
 | `CLIP_MAX_BINARY` | `10485760` | 二进制上限（10MB） |
 | `CLIP_ONCE` | `0` | 默认阅后即焚；`1` 时新内容读取一次后清空 |
+| `CLIP_TRUST_PROXY` | `1` | 是否信任反代传来的 `X-Forwarded-For` / `X-Real-IP`（仅对可信代理生效） |
+| `CLIP_TRUSTED_PROXIES` | 空 | 额外可信代理 IP（逗号分隔）；回环地址总是可信 |
 | `CLIP_TOKEN` | 空 | 内容访问令牌，留空则公开；需 `X-Clip-Token` 头或 `?token=` |
 | `CLIP_ADMIN_PATH` | `/admin` | 后台路径 |
 | `CLIP_ADMIN_PASSWORD` | 取 `CLIP_ADMIN_TOKEN` | 后台登录口令 |

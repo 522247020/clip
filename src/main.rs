@@ -20,6 +20,8 @@
 //!     CLIP_MAX_BYTES      文本大小上限，默认 2MB
 //!     CLIP_MAX_BINARY     二进制大小上限，默认 10MB
 //!     CLIP_ONCE           默认阅后即焚（读取一次后清空），默认 0
+//!     CLIP_TRUST_PROXY    信任反代头（X-Forwarded-For / X-Real-IP），默认 1
+//!     CLIP_TRUSTED_PROXIES 额外的可信代理 IP，逗号分隔（回环地址总是可信）
 //!     CLIP_TOKEN          可选访问令牌，留空则公开
 //!     CLIP_ADMIN_PATH     后台路径，默认 /admin
 //!     CLIP_ADMIN_PASSWORD 后台登录口令，默认取 CLIP_ADMIN_TOKEN
@@ -43,6 +45,7 @@ use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -76,6 +79,8 @@ struct Config {
     admin_password: String,
     admin_path: String,
     once_default: bool,
+    trust_proxy: bool,
+    trusted_proxies: Vec<IpAddr>,
     db_path: PathBuf,
     share_dir: PathBuf,
 }
@@ -142,6 +147,17 @@ impl Config {
                 .ok()
                 .and_then(|v| parse_switch(&v))
                 .unwrap_or(false),
+            trust_proxy: env::var("CLIP_TRUST_PROXY")
+                .ok()
+                .and_then(|v| parse_switch(&v))
+                .unwrap_or(true),
+            trusted_proxies: env::var("CLIP_TRUSTED_PROXIES")
+                .map(|v| {
+                    v.split(',')
+                        .filter_map(|s| parse_ip(s))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
             db_path,
             share_dir,
         }
@@ -669,6 +685,60 @@ fn request_origin(req: &Request) -> String {
     let proto = header_value(req, "X-Forwarded-Proto");
     let host = header_value(req, "Host").or_else(|| header_value(req, "X-Forwarded-Host"));
     build_origin(proto, req.secure(), host)
+}
+
+/// 解析 IP，支持 `1.2.3.4`、`1.2.3.4:5678`、`[::1]:443`、`::1`。
+fn parse_ip(s: &str) -> Option<IpAddr> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Ok(ip) = t.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    if let Some(rest) = t.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            return rest[..end].parse::<IpAddr>().ok();
+        }
+        return None;
+    }
+    // IPv4:port
+    if let Some((host, port)) = t.rsplit_once(':')
+        && port.chars().all(|c| c.is_ascii_digit())
+        && let Ok(ip) = host.parse::<IpAddr>()
+    {
+        return Some(ip);
+    }
+    None
+}
+
+/// 是否信任该直连地址传来的代理头。
+/// 默认信任回环地址（Nginx 一般从 127.0.0.1 反代），
+/// 其他地址可用 CLIP_TRUSTED_PROXIES 显式添加。
+fn is_trusted_proxy(cfg: &Config, ip: &IpAddr) -> bool {
+    cfg.trust_proxy && (ip.is_loopback() || cfg.trusted_proxies.iter().any(|p| p == ip))
+}
+
+/// 真实客户端 IP：反代在可信网络上时优先用 X-Forwarded-For / X-Real-IP。
+fn client_ip(cfg: &Config, req: &Request) -> String {
+    let peer = req.remote_addr().map(|a| a.ip());
+    if let Some(peer_ip) = peer
+        && is_trusted_proxy(cfg, &peer_ip)
+    {
+        if let Some(xff) = header_value(req, "X-Forwarded-For") {
+            for part in xff.split(',') {
+                if let Some(ip) = parse_ip(part) {
+                    return ip.to_string();
+                }
+            }
+        }
+        if let Some(xr) = header_value(req, "X-Real-IP")
+            && let Some(ip) = parse_ip(xr)
+        {
+            return ip.to_string();
+        }
+    }
+    peer.map(|ip| ip.to_string()).unwrap_or_default()
 }
 
 fn fmt_size(n: u64) -> String {
@@ -1551,10 +1621,7 @@ fn respond(
 ) {
     let method = req.method().to_string();
     let url = req.url().to_string();
-    let ip = req
-        .remote_addr()
-        .map(|a| a.ip().to_string())
-        .unwrap_or_default();
+    let ip = client_ip(&state.cfg, &req);
     let ua = header_value_owned(&req, "User-Agent").unwrap_or_default();
     let referer = header_value_owned(&req, "Referer").unwrap_or_default();
     let len = body.len();
@@ -2366,10 +2433,7 @@ fn admin_login_page(state: &AppState, req: Request, error: &str) {
 }
 
 fn admin_login_submit(state: &AppState, mut req: Request) {
-    let ip = req
-        .remote_addr()
-        .map(|a| a.ip().to_string())
-        .unwrap_or_default();
+    let ip = client_ip(&state.cfg, &req);
 
     // 登录失败节流：同一 IP 连续失败过多时暂时锁定。
     {
@@ -2770,5 +2834,17 @@ mod tests {
             build_origin(Some("javascript"), false, Some("<x>")),
             "http://x"
         );
+    }
+
+    #[test]
+    fn ip_parsing() {
+        assert_eq!(parse_ip("1.2.3.4").unwrap().to_string(), "1.2.3.4");
+        assert_eq!(parse_ip(" 1.2.3.4 ").unwrap().to_string(), "1.2.3.4");
+        assert_eq!(parse_ip("1.2.3.4:5678").unwrap().to_string(), "1.2.3.4");
+        assert_eq!(parse_ip("::1").unwrap().to_string(), "::1");
+        assert_eq!(parse_ip("[2001:db8::1]:443").unwrap().to_string(), "2001:db8::1");
+        assert!(parse_ip("").is_none());
+        assert!(parse_ip("not-an-ip").is_none());
+        assert!(parse_ip("[::1").is_none());
     }
 }
